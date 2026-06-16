@@ -1,0 +1,13 @@
+version: "0.1.0"
+description: "Transport-agnostic OTA core for ESP-IDF: a flash writer (raw/UF2/delta auto-detected) plus the DFU Session protocol (manifest+SHA, sliding-window flow control, suspend/resume). Transports (BLE, USB-HID, USB-MSC, UDP, USB-DFU) are thin adapters."
+url: "https://github.com/fvsolutions-dev/dfukit"
+license: "Apache-2.0"
+maintainers:
+  - "Floris Vernieuwe <floris@vernieuwe.eu>"
+
+dependencies:
+  idf: ">=5.0"
+  # Delta OTA: detools-format patch application against the running
+  # partition. Pulled unconditionally by the component manager; the
+  # code paths are gated by CONFIG_DFU_CORE_DELTA_ENABLE.
+  espressif/esp_delta_ota: "^1.1.0"

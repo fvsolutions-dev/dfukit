@@ -1,0 +1,73 @@
+# dfu_example_app example sdkconfig.defaults
+# Enables all four dfu_core transports: BLE, HID, UDP, MSC.
+# Target: ESP32-S3 with USB-OTG.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# Custom partition table (nvs + otadata + phy_init + ota_0 + ota_1).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# OTA rollback — mark running slot valid after 5 s.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# --- dfu_core -----------------------------------------------------------
+CONFIG_DFU_CORE_WORKER_STACK_SIZE=8192
+CONFIG_DFU_CORE_SCRATCH_SLOTS=4
+CONFIG_DFU_CORE_MARK_VALID_DELAY_MS=5000
+CONFIG_DFU_SESSION_WINDOW_BYTES=32768
+CONFIG_DFU_SESSION_IDLE_TIMEOUT_MS=20000
+CONFIG_DFU_TRANSPORT_HW_ID=0x0001
+
+# BLE transport.
+CONFIG_DFU_TRANSPORT_BLE=y
+CONFIG_DFU_TRANSPORT_BLE_SVC_UUID16=0xEEE1
+CONFIG_DFU_TRANSPORT_BLE_CHR_UUID16=0xEEE2
+# CONFIG_DFU_TRANSPORT_BLE_REQUIRE_ENC is not set
+
+# HID transport.
+CONFIG_DFU_TRANSPORT_HID=y
+
+# UDP transport.
+CONFIG_DFU_TRANSPORT_UDP=y
+CONFIG_DFU_TRANSPORT_UDP_PORT=3333
+
+# MSC UF2 drag-drop transport.
+CONFIG_DFU_TRANSPORT_MSC=y
+
+# --- Wi-Fi credentials (for UDP transport) ------------------------------
+# Override these for your AP, or set them with idf.py menuconfig.
+CONFIG_DFU_EXAMPLE_WIFI_SSID="myssid"
+CONFIG_DFU_EXAMPLE_WIFI_PASS="mypassword"
+
+# Wi-Fi + BT coexistence.
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# LWIP UDP receive mailbox — deep enough to absorb a full 32 KB window.
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
+
+# --- BLE (NimBLE) -------------------------------------------------------
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_EXT_ADV=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=128
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=64
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
+# Modem sleep off — USB-powered example; avoids RTC RC clock drift issues.
+# CONFIG_BT_CTRL_MODEM_SLEEP is not set
+
+# --- TinyUSB (for USB-DFU, USB-MSC, USB-HID, USB-CDC) ------------------
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_MSC_ENABLED=y
+CONFIG_TINYUSB_HID_ENABLED=y
+CONFIG_TINYUSB_DFU_ENABLED=y
+CONFIG_TINYUSB_DFU_BUFSIZE=4096
+CONFIG_CFG_TUD_DFU_XFER_BUFSIZE=4096
+
+# --- Flash / memory -----------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y

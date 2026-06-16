@@ -1,0 +1,7 @@
+# ESP-IDF build output and locally-managed state.
+/build/
+/sdkconfig
+/sdkconfig.old
+# Pulled by the component manager from idf_component.yml — not vendored.
+/managed_components/
+/dependencies.lock

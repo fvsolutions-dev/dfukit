@@ -1,0 +1,236 @@
+menu "OTA core"
+
+    config DFU_CORE_MARK_VALID_DELAY_MS
+        int "Mark-valid delay (ms)"
+        default 5000
+        help
+            Delay after boot before the running OTA slot is committed via
+            esp_ota_mark_app_valid_cancel_rollback. Long enough for an
+            early-boot crash to fire and trigger rollback; short enough
+            that the user can't reasonably pull power between OTA flash
+            and commit.
+
+    config DFU_CORE_REBOOT_DELAY_MS
+        int "Reboot delay after image staged (ms)"
+        default 1000
+        help
+            Delay between successful dfu_core_complete (or UF2 auto-
+            complete on the last block) and esp_restart. Gives the host
+            time to receive the final ack before the device drops off the
+            bus.
+
+    config DFU_CORE_PREERASE_INACTIVE
+        bool "Background-erase inactive slot after commit"
+        default y
+        help
+            After the running slot is marked valid, queue a background
+            erase of the inactive OTA partition. The next OTA's writes
+            skip per-sector erase. Set n on power-sensitive boards or
+            when boot-time flash activity needs to be minimal.
+
+    config DFU_CORE_DELTA_ENABLE
+        bool "Accept delta-patch streams (esp_delta_ota)"
+        default y
+        help
+            Auto-detect detools delta patches (esp_delta_ota container,
+            magic 0xfccdde10) alongside raw .bin and UF2. The patch is
+            applied against the RUNNING partition; its embedded base
+            SHA-256 is verified first, so a patch generated against any
+            other image is rejected before flash is touched. Patches
+            are typically a few percent of the full image. When n, the
+            esp_delta_ota code is not linked.
+
+    config DFU_CORE_UF2_STRICT_FAMILY_ID
+        bool "Reject UF2 blocks not matching family ID"
+        default n
+        help
+            Only accept UF2 streams whose family ID matches the
+            configured value. Default off — any UF2 is processed. Turn on
+            for production images where a misdirected drag-drop must be
+            rejected outright instead of getting silently flashed.
+
+    config DFU_CORE_UF2_FAMILY_ID
+        hex "Expected UF2 family ID"
+        default 0xc47e5767
+        depends on DFU_CORE_UF2_STRICT_FAMILY_ID
+        help
+            0xc47e5767 is the canonical ESP32-S3 family ID per
+            uf2families.json. Other chips have their own values; only
+            change this if you're targeting a non-S3 family.
+
+    config DFU_CORE_WORKER_STACK_SIZE
+        int "OTA worker task stack (bytes)"
+        default 4096
+        range 2048 16384
+
+    config DFU_CORE_WORKER_PRIORITY
+        int "OTA worker task priority"
+        default 5
+        range 1 24
+
+    config DFU_CORE_FEED_TIMEOUT_MS
+        int "dfu_core_feed slot-wait timeout (ms)"
+        default 500
+        help
+            How long dfu_core_feed() will wait for a free scratch slot
+            before returning ESP_ERR_TIMEOUT. Lower = transports get back
+            to USB callbacks faster under load; higher = fewer spurious
+            retries on slow flash.
+
+    config DFU_CORE_SCRATCH_SLOTS
+        int "OTA scratch buffer slots"
+        default 2
+        range 1 4
+        help
+            Number of in-flight scratch buffers between transport
+            callbacks and the worker. Memory cost = slots * 4096 bytes.
+
+    config DFU_CORE_DEBUG_LOG
+        bool "Verbose per-block log"
+        default n
+        help
+            Log every UF2 block address + target translation. Off by
+            default — useful only when debugging an OTA path.
+
+    config DFU_CORE_STATUS_LOG_PERIOD_MS
+        int "Periodic OTA progress log period (ms, 0 = off)"
+        default 1000
+        range 0 30000
+        help
+            While an OTA is acquired, emit a one-line progress log on
+            the local UART every N ms. Independent of any wire-level
+            PROGRESS frames; this is for bench debugging. 0 disables.
+
+    menu "Session protocol (transport-agnostic)"
+
+        config DFU_SESSION_WINDOW_BYTES
+            int "Sliding window (max un-ACKed bytes in flight)"
+            default 16384
+            help
+                Advertised in the START response. The client never has
+                more than this many bytes outstanding past the last
+                PROGRESS ack. Effective buffering on the device is
+                DFU_CORE_SCRATCH_SLOTS * 4096 + 4096 (staging). Window
+                must not exceed pend_ring_size (16) * staging_bytes
+                (4096) = 64 KB.
+
+        config DFU_SESSION_IDLE_TIMEOUT_MS
+            int "Transfer idle timeout (ms)"
+            default 10000
+            help
+                A session in TRANSFER with no DATA for this long is
+                suspended (not aborted) and the peer link is torn
+                down so the host can reconnect and resume. The host
+                has DFU_SESSION_RESUME_GRACE_MS to reconnect before
+                the partial image is abandoned.
+
+        config DFU_SESSION_RESUME_GRACE_MS
+            int "Suspended-session resume grace period (ms)"
+            default 60000
+            range 5000 300000
+            help
+                How long a suspended session waits for the peer to
+                reconnect and resume before the OTA writer is released
+                and the partial image is abandoned. Generous default
+                covers host-side stack restarts, BLE rescans, and a
+                human re-running the upload command.
+
+    endmenu
+
+    menu "OTA transports"
+
+        config DFU_TRANSPORT_HW_ID
+            hex "Hardware ID accepted in START manifests"
+            default 0x0001
+            help
+                Clients declare a hw_id in the START command; mismatches
+                are rejected with HW_MISMATCH so a firmware for board A
+                can never be pushed to board B. Shared by all session
+                transports (BLE, HID, UDP).
+
+        config DFU_TRANSPORT_BLE
+            bool "Enable BLE transport adapter"
+            default n
+            depends on BT_NIMBLE_ENABLED
+            help
+                Registers a single-characteristic GATT service (write-
+                without-response down, notify up) that speaks DFU Session
+                Protocol v1.1. Adds NimBLE (bt) to the component's
+                REQUIRES. Call dfu_ble_register() before the NimBLE host
+                task starts.
+
+        if DFU_TRANSPORT_BLE
+
+            config DFU_TRANSPORT_BLE_SVC_UUID16
+                hex "OTA service UUID (16-bit)"
+                range 0x0000 0xFFFF
+                default 0xEEE1
+                help
+                    16-bit UUID for the OTA primary GATT service.
+                    Default 0xEEE1; sits next to the management service
+                    (0xEEE0). Hosts scan-filter on this UUID.
+
+            config DFU_TRANSPORT_BLE_CHR_UUID16
+                hex "OTA characteristic UUID (16-bit)"
+                range 0x0000 0xFFFF
+                default 0xEEE2
+                help
+                    16-bit UUID for the single OTA characteristic.
+                    Default 0xEEE2 — one above the service. Carries
+                    protocol opcodes via write-without-response downstream
+                    and notifications upstream.
+
+            config DFU_TRANSPORT_BLE_REQUIRE_ENC
+                bool "Require an encrypted link for OTA writes"
+                default n
+                help
+                    Adds BLE_GATT_CHR_F_WRITE_ENC to the OTA
+                    characteristic so only paired/encrypted centrals
+                    can start a session.
+
+        endif # DFU_TRANSPORT_BLE
+
+        config DFU_TRANSPORT_HID
+            bool "Enable USB-HID transport adapter"
+            default n
+            help
+                Routes 64-byte vendor HID OUT reports into dfu_session.
+                Adds espressif__tinyusb to the component's REQUIRES.
+                Call dfu_hid_register() before the TinyUSB stack starts;
+                forward tud_hid_set_report_cb → dfu_hid_on_out() and
+                tud_hid_report_complete_cb → dfu_hid_on_in_complete().
+
+        config DFU_TRANSPORT_UDP
+            bool "Enable UDP transport adapter"
+            default n
+            help
+                Binds a UDP socket and feeds received datagrams into
+                dfu_session. Adds lwip and esp_netif to the component's
+                REQUIRES. The caller is responsible for bringing up the
+                IP stack before calling dfu_udp_start().
+
+        if DFU_TRANSPORT_UDP
+
+            config DFU_TRANSPORT_UDP_PORT
+                int "UDP listen port"
+                default 3333
+                range 1 65535
+                help
+                    UDP port the device binds and listens on for incoming
+                    DFU Session Protocol frames.
+
+        endif # DFU_TRANSPORT_UDP
+
+        config DFU_TRANSPORT_MSC
+            bool "Enable MSC UF2 drag-drop transport adapter"
+            default n
+            help
+                Extracts the UF2 sniff-and-feed logic for USB-MSC
+                drag-drop OTA. Has no TinyUSB dependency — pure
+                bytes→dfu_core. Call dfu_msc_uf2_register() once, then
+                forward each 512-byte sector to dfu_msc_uf2_write() and
+                call dfu_msc_uf2_reset() on USB mount.
+
+    endmenu
+
+endmenu

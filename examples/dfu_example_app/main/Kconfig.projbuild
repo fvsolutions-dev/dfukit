@@ -1,0 +1,17 @@
+menu "DFU example app"
+
+    config DFU_EXAMPLE_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "myssid"
+        depends on DFU_TRANSPORT_UDP
+        help
+            SSID of the AP to connect to for UDP OTA transport.
+
+    config DFU_EXAMPLE_WIFI_PASS
+        string "Wi-Fi password"
+        default "mypassword"
+        depends on DFU_TRANSPORT_UDP
+        help
+            Password for the above SSID. Leave blank for open networks.
+
+endmenu

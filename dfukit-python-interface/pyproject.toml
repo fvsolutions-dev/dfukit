@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dfukit"
+version = "0.1.0"
+description = "One-stop firmware-update toolkit for ESP devices: BLE, USB-HID, USB-MSC, USB-DFU, UDP, and UART, with delta updates."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Floris Vernieuwe", email = "floris@vernieuwe.eu" }]
+keywords = ["ota", "firmware", "dfu", "ble", "esp32", "delta", "update"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+    "Topic :: Software Development :: Embedded Systems",
+]
+dependencies = [
+    "click>=8.1",
+    "tqdm>=4.66",
+    # BLE transport.
+    "bleak>=0.21",
+    # Delta patch generation (heatshrink-compressed detools, the format
+    # esp_delta_ota applies on-device). Compiled extension — needs a C
+    # toolchain + python headers on the build host.
+    "detools>=0.53",
+]
+
+[project.optional-dependencies]
+# ESP ROM serial-bootloader transport (`dfukit uart`). esptool is heavy
+# (cryptography, reedsolo) and only needed for ROM flashing, so it's an
+# extra: `pip install dfukit[uart]`.
+uart = ["esptool>=5.0"]
+
+[project.scripts]
+dfukit = "dfukit.cli:main"
+
+[project.urls]
+Homepage   = "https://github.com/fvsolutions-dev/dfukit"
+Repository = "https://github.com/fvsolutions-dev/dfukit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dfukit"]
