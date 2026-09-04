@@ -282,7 +282,12 @@ void dfu_session_peer_gone(dfu_session_t *s)
 
 static void handle_start(dfu_session_t *s, const uint8_t *pl, uint16_t len)
 {
+    /* Every reject below logs its reason at WARN. A START that fails is the
+       one frame the host can do nothing about, and "the client just said
+       BUSY / INVALID_STATE" is unreadable without the device's side of it. */
     if (len < START_PAYLOAD_LEN) {
+        ESP_LOGW(TAG, "[%s] START payload %u B < %u B expected",
+                 s->tx.name, (unsigned)len, (unsigned)START_PAYLOAD_LEN);
         notify_rsp(s, OP_START, STS_INVALID_STATE, NULL, 0);
         return;
     }
@@ -292,13 +297,26 @@ static void handle_start(dfu_session_t *s, const uint8_t *pl, uint16_t len)
     memcpy(&req, pl, sizeof(req));
     (void)req.fw_ver; (void)req.min_fw;  /* version gating hook */
 
-    if (req.proto != PROTO_VER)          { notify_rsp(s, OP_START, STS_INVALID_STATE, NULL, 0); return; }
-    if (req.hw_id != s->cfg.hw_id)       { notify_rsp(s, OP_START, STS_HW_MISMATCH,   NULL, 0); return; }
+    if (req.proto != PROTO_VER) {
+        ESP_LOGW(TAG, "[%s] START proto %u != %u", s->tx.name,
+                 (unsigned)req.proto, (unsigned)PROTO_VER);
+        notify_rsp(s, OP_START, STS_INVALID_STATE, NULL, 0);
+        return;
+    }
+    if (req.hw_id != s->cfg.hw_id) {
+        ESP_LOGW(TAG, "[%s] START hw_id 0x%04x != ours 0x%04x", s->tx.name,
+                 (unsigned)req.hw_id, (unsigned)s->cfg.hw_id);
+        notify_rsp(s, OP_START, STS_HW_MISMATCH, NULL, 0);
+        return;
+    }
 
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     /* UF2 containers are ~8% bigger than the raw image. 2x the slot
        is a safe sanity cap. */
     if (!part || req.size == 0 || req.size > part->size * 2) {
+        ESP_LOGW(TAG, "[%s] START size %" PRIu32 " B rejected (update slot %" PRIu32 " B%s)",
+                 s->tx.name, req.size, part ? (uint32_t)part->size : 0,
+                 part ? "" : ", none found — single-app partition table?");
         notify_rsp(s, OP_START, STS_TOO_LARGE, NULL, 0);
         return;
     }
@@ -352,8 +370,15 @@ static void handle_start(dfu_session_t *s, const uint8_t *pl, uint16_t len)
         xSemaphoreGive(s->mtx);
     }
 
-    if (dfu_core_acquire(s->tx.source_id, core_cb, s) != ESP_OK) {
-        notify_rsp(s, OP_START, STS_BUSY, NULL, 0);  /* another src owns OTA */
+    esp_err_t acq = dfu_core_acquire(s->tx.source_id, core_cb, s);
+    if (acq != ESP_OK) {
+        /* Two very different faults answer the host with the same BUSY:
+           another transport owns the writer, or dfu_core_init() was never
+           called at boot. dfu_core logs which one at ERROR; name the
+           consequence here so the two lines read as one story. */
+        ESP_LOGE(TAG, "[%s] START -> BUSY: dfu_core_acquire failed: %s",
+                 s->tx.name, esp_err_to_name(acq));
+        notify_rsp(s, OP_START, STS_BUSY, NULL, 0);
         return;
     }
 

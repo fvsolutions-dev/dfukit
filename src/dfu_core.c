@@ -154,10 +154,17 @@ esp_err_t dfu_core_init(void)
 esp_err_t dfu_core_acquire(dfu_source_t src, dfu_core_cb_t cb, void *user)
 {
     if (src == DFU_SRC_NONE) return ESP_ERR_INVALID_ARG;
-    if (!state_mtx) return ESP_ERR_INVALID_STATE;
+    if (!state_mtx) {
+        ESP_LOGE(TAG, "acquire by src=%d before dfu_core_init() — no OTA worker",
+                 (int)src);
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(state_mtx, portMAX_DELAY);
     if (active_src != DFU_SRC_NONE && active_src != src) {
+        dfu_source_t owner = active_src;
         xSemaphoreGive(state_mtx);
+        ESP_LOGE(TAG, "acquire by src=%d refused; src=%d owns the writer",
+                 (int)src, (int)owner);
         return ESP_ERR_INVALID_STATE;
     }
     if (active_src == DFU_SRC_NONE) {
@@ -648,8 +655,15 @@ static esp_err_t delta_feed(const uint8_t *data, size_t len)
 // partition, in which case the lazy erase is a no-op marking.
 
 #define FLASH_SECTOR_BYTES 4096
-// 1.5 MB OTA partition / 4 KB sectors = 384 sectors. Bitmap = 48 bytes.
-#define MAX_SECTORS         384
+/* Sized for the largest OTA slot this chip family plausibly carries: 8 MB /
+   4 KB = 2048 sectors, 256 B of bitmap. The previous 384 covered only a
+   1.5 MB slot (pros3's) and truncated silently on the 3 MB controller and
+   devkit16 slots — and truncation here corrupts rather than merely slows:
+   mark_sector_erased() no-ops out of range, so the 16 sub-sector UF2 blocks
+   sharing one 4 KB sector each re-erase it and wipe the previous 15 writes
+   (the very hazard the comment in the writer below warns about). Anything
+   that still would not fit is refused in uf2_start rather than degrading. */
+#define MAX_SECTORS         2048
 static uint8_t sector_erased[(MAX_SECTORS + 7) / 8];
 static bool    preerase_done;          // set by MSG_PREERASE handler
 static const esp_partition_t *uf2_inactive;
@@ -675,6 +689,14 @@ esp_err_t dfu_core_internal_uf2_start(void)
     if (!uf2_inactive || !uf2_active) {
         ESP_LOGE(TAG, "UF2: missing partition handles");
         return ESP_FAIL;
+    }
+    /* Refuse rather than truncate: a slot bigger than the bitmap would let
+       sub-sector writes past the limit erase each other (see MAX_SECTORS). */
+    const uint32_t need = uf2_inactive->size / FLASH_SECTOR_BYTES;
+    if (need > MAX_SECTORS) {
+        ESP_LOGE(TAG, "%s needs %" PRIu32 " erase-bitmap sectors, have %d — "
+                      "raise MAX_SECTORS", uf2_inactive->label, need, MAX_SECTORS);
+        return ESP_ERR_INVALID_SIZE;
     }
     // Clear per-sector erase tracking. preerase_done stays true if the
     // background pre-erase already wiped the partition — sector_was_erased

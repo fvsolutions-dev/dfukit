@@ -15,6 +15,11 @@
 
 #include "dfu_session.h"
 
+#if !defined(CFG_TUD_HID) || !CFG_TUD_HID
+#error "CONFIG_DFU_TRANSPORT_HID needs the TinyUSB HID class (CFG_TUD_HID). \
+Enable USB HID for this build, or set CONFIG_DFU_TRANSPORT_HID=n.
+#endif
+
 static const char *TAG = "dfu_hid";
 
 #define HID_REPORT_BYTES   64
