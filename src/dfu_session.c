@@ -90,6 +90,7 @@ struct dfu_session {
 
     SemaphoreHandle_t       mtx;
     session_state_t         st;
+    uint8_t                 target;       /* dfu_core's, from START: 0 this chip */
 
     uint32_t                image_size;
     uint8_t                 sha_expected[32];
@@ -303,17 +304,32 @@ static void handle_start(dfu_session_t *s, const uint8_t *pl, uint16_t len)
         notify_rsp(s, OP_START, STS_INVALID_STATE, NULL, 0);
         return;
     }
+    /* Our own hw_id: this chip's OTA slot. Another one: a registered
+       target behind this chip (dfu_core_register_target), or a mismatch. */
+    uint8_t target = 0;
     if (req.hw_id != s->cfg.hw_id) {
-        ESP_LOGW(TAG, "[%s] START hw_id 0x%04x != ours 0x%04x", s->tx.name,
-                 (unsigned)req.hw_id, (unsigned)s->cfg.hw_id);
-        notify_rsp(s, OP_START, STS_HW_MISMATCH, NULL, 0);
-        return;
+        target = dfu_core_target_by_hw_id(req.hw_id);
+        if (target == 0) {
+            ESP_LOGW(TAG, "[%s] START hw_id 0x%04x != ours 0x%04x, and no target has it",
+                     s->tx.name, (unsigned)req.hw_id, (unsigned)s->cfg.hw_id);
+            notify_rsp(s, OP_START, STS_HW_MISMATCH, NULL, 0);
+            return;
+        }
+    }
+    if (target > 0) {
+        const dfu_core_target_t *t = dfu_core_target(target);
+        if (req.size == 0 || req.size > t->max_size) {
+            ESP_LOGW(TAG, "[%s] START size %" PRIu32 " B rejected (target %s takes %" PRIu32 " B)",
+                     s->tx.name, req.size, t->name, t->max_size);
+            notify_rsp(s, OP_START, STS_TOO_LARGE, NULL, 0);
+            return;
+        }
     }
 
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     /* UF2 containers are ~8% bigger than the raw image. 2x the slot
        is a safe sanity cap. */
-    if (!part || req.size == 0 || req.size > part->size * 2) {
+    if (target == 0 && (!part || req.size == 0 || req.size > part->size * 2)) {
         ESP_LOGW(TAG, "[%s] START size %" PRIu32 " B rejected (update slot %" PRIu32 " B%s)",
                  s->tx.name, req.size, part ? (uint32_t)part->size : 0,
                  part ? "" : ", none found — single-app partition table?");
@@ -371,6 +387,10 @@ static void handle_start(dfu_session_t *s, const uint8_t *pl, uint16_t len)
     }
 
     esp_err_t acq = dfu_core_acquire(s->tx.source_id, core_cb, s);
+    if (acq == ESP_OK) {
+        acq = dfu_core_select_target(s->tx.source_id, target);
+        if (acq != ESP_OK) dfu_core_release(s->tx.source_id);
+    }
     if (acq != ESP_OK) {
         /* Two very different faults answer the host with the same BUSY:
            another transport owns the writer, or dfu_core_init() was never
@@ -389,6 +409,7 @@ static void handle_start(dfu_session_t *s, const uint8_t *pl, uint16_t len)
     xSemaphoreTake(s->mtx, portMAX_DELAY);
     reset_session_locked(s);
     s->image_size = size;
+    s->target = target;
     memcpy(s->sha_expected, req.sha256, 32);
     mbedtls_sha256_init(&s->sha_ctx);
     mbedtls_sha256_starts(&s->sha_ctx, 0 /* SHA-256 */);
@@ -550,7 +571,9 @@ static void handle_apply(dfu_session_t *s, const uint8_t *pl, uint16_t len)
         return;
     }
     notify_rsp(s, OP_APPLY, STS_OK, NULL, 0);
-    esp_timer_start_once(s->reboot_timer, (uint64_t)delay_ms * 1000);
+    /* Another target switched to its image itself at FINISH
+       (dfu_core_target_t.finish): this chip stays up */
+    if (s->target == 0) esp_timer_start_once(s->reboot_timer, (uint64_t)delay_ms * 1000);
 }
 
 static void handle_confirm(dfu_session_t *s)

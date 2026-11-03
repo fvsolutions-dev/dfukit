@@ -92,6 +92,11 @@ static uint32_t            bytes_written;
 static uint32_t            image_total;
 #if CONFIG_DFU_CORE_STATUS_LOG_PERIOD_MS > 0
 static esp_timer_handle_t  status_timer;
+
+// Registered targets (index = id - 1), and the session's: NULL is this chip's own slot
+static const dfu_core_target_t *targets[DFU_CORE_MAX_TARGETS];
+static const dfu_core_target_t *active_target;
+static bool                target_begun;
 #endif
 
 // ---------------------------------------------------------------------------
@@ -278,6 +283,44 @@ void dfu_core_mark_running_valid_after_ms(uint32_t delay_ms)
     }
 }
 
+esp_err_t dfu_core_register_target(uint8_t id, const dfu_core_target_t *target)
+{
+    if (id == 0 || id > DFU_CORE_MAX_TARGETS || !target || !target->begin || !target->write ||
+        !target->finish || !target->abort) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    targets[id - 1] = target;
+    ESP_LOGI(TAG, "target %u: %s (hw_id 0x%04x)", (unsigned)id, target->name,
+             (unsigned)target->hw_id);
+    return ESP_OK;
+}
+
+esp_err_t dfu_core_select_target(dfu_source_t src, uint8_t id)
+{
+    if (id > DFU_CORE_MAX_TARGETS || (id > 0 && !targets[id - 1])) return ESP_ERR_NOT_FOUND;
+    if (!state_mtx) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(state_mtx, portMAX_DELAY);
+    // Only before the first feed: the worker has not looked at the stream yet
+    esp_err_t err = (active_src == src && mode == MODE_UNKNOWN && !target_begun)
+                        ? ESP_OK : ESP_ERR_INVALID_STATE;
+    if (err == ESP_OK) active_target = id > 0 ? targets[id - 1] : NULL;
+    xSemaphoreGive(state_mtx);
+    return err;
+}
+
+uint8_t dfu_core_target_by_hw_id(uint16_t hw_id)
+{
+    for (uint8_t i = 0; i < DFU_CORE_MAX_TARGETS; i++) {
+        if (targets[i] && targets[i]->hw_id == hw_id) return i + 1;
+    }
+    return 0;
+}
+
+const dfu_core_target_t *dfu_core_target(uint8_t id)
+{
+    return id > 0 && id <= DFU_CORE_MAX_TARGETS ? targets[id - 1] : NULL;
+}
+
 void dfu_core_report_total(uint32_t total_bytes)
 {
     if (!state_mtx) return;
@@ -291,6 +334,19 @@ void dfu_core_report_total(uint32_t total_bytes)
 
 static esp_err_t handle_feed(const uint8_t *data, size_t len)
 {
+    if (active_target) {
+        if (!target_begun) {
+            esp_err_t err = active_target->begin(active_target->ctx, image_total);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "target %s: begin: %s", active_target->name,
+                         esp_err_to_name(err));
+                return err;
+            }
+            target_begun = true;
+            mode = MODE_RAW;
+        }
+        return active_target->write(active_target->ctx, data, len);
+    }
     if (mode == MODE_UNKNOWN) {
 #if CONFIG_DFU_CORE_DELTA_ENABLE
         if (delta_looks_like(data, len)) {
@@ -328,6 +384,16 @@ static esp_err_t handle_feed(const uint8_t *data, size_t len)
 static esp_err_t handle_complete(uint32_t reboot_delay_ms)
 {
     esp_err_t err = ESP_OK;
+    if (active_target) {
+        // No reboot of this chip: the target switches to its new image itself
+        err = target_begun ? active_target->finish(active_target->ctx) : ESP_ERR_INVALID_STATE;
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "target %s: finish: %s", active_target->name, esp_err_to_name(err));
+            worker_ota_abort();
+        }
+        target_begun = false;
+        return err;
+    }
     if (mode == MODE_RAW) {
         err = worker_ota_finish();
 #if CONFIG_DFU_CORE_DELTA_ENABLE
@@ -531,6 +597,12 @@ static esp_err_t worker_ota_finish(void)
 
 static void worker_ota_abort(void)
 {
+    if (active_target && target_begun) {
+        active_target->abort(active_target->ctx);
+        target_begun = false;
+        ESP_LOGW(TAG, "aborted the update of target %s", active_target->name);
+        return;
+    }
 #if CONFIG_DFU_CORE_DELTA_ENABLE
     if (delta_handle) {
         esp_delta_ota_deinit(delta_handle);
@@ -655,6 +727,8 @@ static esp_err_t delta_feed(const uint8_t *data, size_t len)
 // partition, in which case the lazy erase is a no-op marking.
 
 #define FLASH_SECTOR_BYTES 4096
+// The background pre-erase's step: 16 sectors, a flash block
+#define PREERASE_BLOCK_BYTES (16 * FLASH_SECTOR_BYTES)
 /* Sized for the largest OTA slot this chip family plausibly carries: 8 MB /
    4 KB = 2048 sectors, 256 B of bitmap. The previous 384 covered only a
    1.5 MB slot (pros3's) and truncated silently on the 3 MB controller and
@@ -772,6 +846,10 @@ esp_err_t dfu_core_internal_uf2_finish(void)
     esp_err_t err = esp_ota_set_boot_partition(uf2_inactive);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "set_boot_partition: %s", esp_err_to_name(err));
+        // The slot holds what was written (an invalid image): no longer erased, so the next
+        // stream must erase again, as after an abort. Without this it wrote onto that image
+        // and failed validation too, every update until a reboot.
+        dfu_core_internal_uf2_abort();
         return err;
     }
     ESP_LOGI(TAG, "image staged on %s, awaiting reboot", uf2_inactive->label);
@@ -808,10 +886,18 @@ static void preerase(void)
     }
     ESP_LOGI(TAG, "preerasing %s (0x%" PRIx32 " B) in background",
              part->label, part->size);
-    esp_err_t err = esp_partition_erase_range(part, 0, part->size);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "preerase: %s", esp_err_to_name(err));
-        return;
+    /* In blocks with a tick between: one call for the whole slot held the
+       flash for seconds (9 s for 3 MB on a devkit), and the other core's
+       idle task tripped the task watchdog */
+    for (uint32_t off = 0; off < part->size; off += PREERASE_BLOCK_BYTES) {
+        uint32_t len = part->size - off < PREERASE_BLOCK_BYTES ? part->size - off
+                                                               : PREERASE_BLOCK_BYTES;
+        esp_err_t err = esp_partition_erase_range(part, off, len);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "preerase at 0x%" PRIx32 ": %s", off, esp_err_to_name(err));
+            return;
+        }
+        vTaskDelay(1);
     }
     ESP_LOGI(TAG, "preerase done");
     preerase_done = true;
@@ -863,6 +949,7 @@ static const char *src_name(dfu_source_t src)
     case DFU_SRC_MSC:     return "msc";
     case DFU_SRC_USB_HID: return "hid";
     case DFU_SRC_UDP:     return "udp";
+    case DFU_SRC_HTTP:    return "http";
     default:              return "none";
     }
 }
@@ -902,6 +989,8 @@ static void deliver(dfu_event_t evt, esp_err_t err)
 static void reset_session(void)
 {
     active_src = DFU_SRC_NONE;
+    active_target = NULL;
+    target_begun = false;
     active_cb = NULL;
     active_user = NULL;
     mode = MODE_UNKNOWN;

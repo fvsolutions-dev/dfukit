@@ -33,6 +33,7 @@ typedef enum {
     DFU_SRC_MSC,
     DFU_SRC_USB_HID,
     DFU_SRC_UDP,
+    DFU_SRC_HTTP,
 } dfu_source_t;
 
 typedef enum {
@@ -81,6 +82,39 @@ bool dfu_core_in_progress(void);
 // CONFIG_DFU_CORE_STATUS_LOG_PERIOD_MS) so a percent can be reported.
 // Pass 0 to clear. Safe to call from any context.
 void dfu_core_report_total(uint32_t total_bytes);
+
+// Other targets than this chip's own OTA slot (target 0): a device behind this one, for
+// example, updated through it. The worker hands each target the bytes as they arrive, in
+// order (no format detection), and doesn't reboot this chip at the end. All calls run on the
+// worker task; each may block (its pace is the feed's pace).
+typedef struct {
+    const char *name;
+    uint16_t hw_id;          // what a session's START names it by (dfu_session)
+    uint32_t max_size;       // the largest image it takes, in bytes
+    // A new image of total bytes (0 when not known) begins
+    esp_err_t (*begin)(void *ctx, uint32_t total);
+    esp_err_t (*write)(void *ctx, const void *data, size_t len);
+    // All of it was written: check it and switch to it
+    esp_err_t (*finish)(void *ctx);
+    // Broken off, after begin
+    void (*abort)(void *ctx);
+    void *ctx;
+} dfu_core_target_t;
+
+#define DFU_CORE_MAX_TARGETS 4
+
+// Register target id (1 to DFU_CORE_MAX_TARGETS); the target must stay valid
+esp_err_t dfu_core_register_target(uint8_t id, const dfu_core_target_t *target);
+
+// The target the source writes to: after acquire, before the first feed. 0 is this chip's own
+// OTA slot, the default
+esp_err_t dfu_core_select_target(dfu_source_t src, uint8_t id);
+
+// The registered target named by hw_id: its id, or 0 when there is none
+uint8_t dfu_core_target_by_hw_id(uint16_t hw_id);
+
+// A registered target, or NULL
+const dfu_core_target_t *dfu_core_target(uint8_t id);
 
 // Commit the running slot so it isn't rolled back on the next boot.
 // Schedules a one-shot timer that fires after delay_ms, marks valid, and
