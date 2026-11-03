@@ -34,6 +34,7 @@ typedef enum {
     DFU_SRC_USB_HID,
     DFU_SRC_UDP,
     DFU_SRC_HTTP,
+    DFU_SRC_EROS,
 } dfu_source_t;
 
 typedef enum {

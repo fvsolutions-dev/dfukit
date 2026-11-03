@@ -950,6 +950,7 @@ static const char *src_name(dfu_source_t src)
     case DFU_SRC_USB_HID: return "hid";
     case DFU_SRC_UDP:     return "udp";
     case DFU_SRC_HTTP:    return "http";
+    case DFU_SRC_EROS:    return "eros";
     default:              return "none";
     }
 }
