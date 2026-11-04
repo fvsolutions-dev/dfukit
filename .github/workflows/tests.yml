@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Test tools
-        run: pip install pytest "nanobind>=2.5"
+        run: pip install pytest "nanobind>=2.5" pyserial "burst-link-protocol>=1.1.6"
       - name: Build
         run: cmake -S . -B build && cmake --build build
       - name: Test

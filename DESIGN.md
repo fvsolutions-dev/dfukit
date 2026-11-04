@@ -66,12 +66,12 @@ flowchart LR
 flowchart TB
     subgraph H [Host]
         direction TB
-        hcli[application]
-        hpy["Python package<br/>bindings, optional"]
+        hcli[CLI or application]
+        hpy["Python package<br/>bindings, deflate, transports"]
         hc["dfukit client (C)"]
-        htr["transport<br/>(the application's)"]
+        htr["transport<br/>(built in, or a plugin)"]
         hcli --> hpy --> hc
-        hcli --> htr
+        hpy --> htr
     end
 
     subgraph D [Device]
@@ -168,7 +168,7 @@ never starts a reply.
 
 The host streams `DATA` without waiting; the device answers with `ACK`s on its own cadence: every
 8 KB taken or once half the window is used, whichever is less, and at the latest after 50 ms. The
-`INFO` exchange below is optional, and up to the application: the client does not send it.
+`INFO` exchange below is optional, and up to the application: the C client does not send it.
 
 ```mermaid
 sequenceDiagram
@@ -472,11 +472,40 @@ Deflate (RFC 1951, raw) is the encoding; raw is always allowed.
 
 ## The client, in C and from Python
 
+```mermaid
+flowchart TB
+    subgraph c [C, one implementation]
+        client["client<br/>START, DATA pipeline, RTO, rewind on GAP, resume"]
+        server["server<br/>sessions, backends"]
+    end
+
+    subgraph py [Python package]
+        bind["bindings to the C client and server"]
+        enc["deflate: zlib"]
+        reg["transport registry<br/>(entry points: dfukit.transports)"]
+        cli["CLI: dfukit update --via TRANSPORT:ADDRESS --board ID IMAGE"]
+        cli --> bind --> client
+        cli --> enc
+        cli --> reg
+        reg --> s["serial (burst-link), udp<br/>built in"]
+        reg --> p["any other link<br/>(a plugin package)"]
+    end
+
+    subgraph emb [Embedded host]
+        app["an application with an image<br/>(in flash, from a download)"] --> client
+    end
+```
+
 - The client is driven like the server: frames in (`feed`), frames out (a send callback),
   time in (`poll`). It reads the stream from a callback (a file, flash), so the C client never
-  needs the whole image in RAM. Python's `begin()` does: it takes the image as bytes.
-- The Python package is thin: bindings to the C client and server, and the ram backend and
-  pass-through. The C client holds the sender's logic; the caller provides the link and the clock.
+  needs the whole image in RAM. Python's `begin()` and `Update` do: they take the image as bytes.
+- The Python package is thin: the bindings, deflate (zlib), `INFO`'s parser, the transport registry
+  and the CLI. The C client holds the sender's logic.
+- The transport interface (Python): `open(address)`, `send(frame)`, frames delivered to a
+  callback, `max_frame`, `close()`; a link error when the link is gone. Other links come as
+  plugins: a package registers its transports under the entry point `dfukit.transports`.
+- Reconnecting goes through the same transport; the client resumes. Not once `ACTIVATE` is sent: a
+  device that restarted has no session left, and would be flashed again.
 
 ## Code layout
 
@@ -487,7 +516,7 @@ flowchart TB
         crc["lib/crc32/<br/>CRC-32, weak: replaceable"]
         miniz["lib/miniz/<br/>tinfl"]
         backends["backends/<br/>ram"]
-        py["python/<br/>bindings"]
+        py["python/<br/>bindings, deflate, transports, CLI"]
         tests["tests/<br/>client and server over a lossy link, the wire format, bindings"]
     end
     core --> crc
@@ -505,6 +534,8 @@ The tests are in Python, on the shipped C code through its bindings (`tests/READ
   frames dropped, duplicated and delayed, resume, slow backends, two boards, a pass-through,
   deflate. The image must arrive whole, with a bounded number of resends.
 - The frames, byte for byte, against bytes written out by hand.
+- The Python package and the CLI against a device in the test process: in memory, over UDP on this
+  machine, and over a pseudo-terminal with the `serial` extra.
 
 ```bash
 cmake -S . -B build && cmake --build build && ctest --test-dir build --no-tests=error
@@ -520,7 +551,7 @@ link the bridge offers; the bridge reaches the device over a serial link.
 
 ```mermaid
 flowchart LR
-    tool["host<br/>dfukit client"]
+    tool["dfukit CLI<br/>with a transport plugin"]
     subgraph br [Bridge]
         tr["transport"] --> srv[dfukit server]
         srv -- "0x0000A001" --> ota["image backend<br/>(its own OTA slots)"]
@@ -538,6 +569,28 @@ flowchart LR
 - On `START` for the device, the pass-through brings the device into update mode (for example a
   pin held while it resets it), then carries the session over the serial link.
 - The device decodes, checks and writes the image itself.
+
+### A host with its own link
+
+A host tool for a device on a link dfukit does not know: a small package registers its transport,
+and the CLI uses it by name.
+
+```python
+# my_link/transport.py, registered in pyproject.toml:
+# [project.entry-points."dfukit.transports"]
+# mylink = "my_link.transport:MyLinkTransport"
+
+class MyLinkTransport(dfukit.Transport):
+    max_frame = 509
+
+    def open(self, address: str) -> None: ...
+    def send(self, frame: bytes) -> None: ...   # deliver each received frame with self.received()
+    def close(self) -> None: ...
+```
+
+```bash
+dfukit update --via mylink:192.168.1.20 --board 0x0000B001 firmware.bin
+```
 
 ## Open points
 

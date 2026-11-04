@@ -1,7 +1,7 @@
 # dfukit
 
 Firmware updates over any link. dfukit is a small update protocol with a server for the device
-and a client for the host, both in C.
+and a client for the host, both in C, and a Python package and CLI that drive the C client.
 
 - One protocol for every link: UART, UDP, TCP, BLE, USB, or a link of your own. dfukit sends
   frames; the link only has to carry them, and may lose some.
@@ -53,7 +53,7 @@ For the C libraries alone, add `-DDFUKIT_PYTHON=OFF` to the first `cmake`. That 
 so leave out `ctest`.
 
 The tests run the server and the client against each other through a simulated link that drops,
-duplicates and delays frames.
+duplicates and delays frames, and the Python package and CLI against a device in the test process.
 They are in Python, on the C code through its bindings; `tests/README.md` has how to measure their
 coverage.
 
@@ -132,9 +132,9 @@ dfukit_inflate_init(&inflate, &inflater, dict, sizeof(dict));
 `on_status` in the config reports the session's state and progress, on every change and every
 acknowledgement: for a light or a display. A pass-through session has no progress to report.
 
-`INFO` lists as many boards as fit in one frame, after a name cut to fit. Neither the C client nor
-the Python bindings send or parse it: an application that wants it sends the frame itself and reads
-the answer (`DESIGN.md`, Messages). It can warn early, but `START` is the real check.
+`INFO` lists as many boards as fit in one frame, after a name cut to fit. The C client does not send
+or parse it: a C application that wants it sends the frame itself and reads the answer (`DESIGN.md`,
+Messages). In Python it is `dfukit.info()`. It can warn early, but `START` is the real check.
 
 ## Backends
 
@@ -270,13 +270,66 @@ while (dfukit_client_state(&client) < DFUKIT_CLIENT_DONE) {
 After a lost link (or a `DFUKIT_TIMEOUT`), `dfukit_client_resume()` on the new one goes on where
 the device stopped, or starts over when the device has no state left.
 
-## From Python
+## A host: Python
 
 ```bash
 pip install dfukit
+pip install 'dfukit[serial]'   # with the serial transport (pyserial, burst-link)
 ```
 
-The same client and server, driven the same way. The caller provides the link and the clock, in
+```python
+import dfukit
+
+transport = dfukit.open_transport("udp:192.168.1.20:5000")
+board = dfukit.info(transport).board(0x0000A001)  # None when it does not fit INFO's frame
+
+# Compressed for the window the device has: a larger one fails at the end, with a CRC mismatch
+update = dfukit.Update(
+    transport, image, 0x0000A001, encoding=dfukit.DEFLATE, window_log2=board.window_log2
+)
+update.run(progress=lambda done, total: print(done, total))
+```
+
+`Update.run()` takes a `reconnect` callback that returns a new transport after a lost link; the
+update then resumes on it, and gives up after 70 s without progress. Once `ACTIVATE` is sent it does
+not reconnect, because a device that restarted would be flashed again: a lost answer raises
+`dfukit.ActivationNotConfirmed`, and the device may well be running the new image.
+
+The CLI:
+
+```bash
+dfukit info --via udp:192.168.1.20:5000
+dfukit update --via serial:/dev/ttyUSB0@3000000 --board 0x0000B001 firmware.bin
+```
+
+`--encoding auto` (the default) deflates when the board takes it, with the board's window.
+
+The transports that come with the package are `udp` (one frame per datagram) and `serial`
+(burst-link frames). Others come as plugins: a package registers a `dfukit.Transport` subclass
+under the entry point `dfukit.transports`, and the CLI finds it by its name.
+
+```python
+class MyLinkTransport(dfukit.Transport):
+    max_frame = 509
+
+    def open(self, address: str) -> None: ...
+    def send(self, frame: bytes) -> None: ...  # hand each received frame to self.received()
+    def close(self) -> None: ...
+```
+
+```toml
+[project.entry-points."dfukit.transports"]
+mylink = "my_link.transport:MyLinkTransport"
+```
+
+A transport raises `dfukit.LinkError` when its link is gone.
+
+### The client and server directly
+
+For a link and a clock of your own, without a transport: the same client and server as in C, driven
+the same way.
+
+The caller provides the link and the clock, in
 milliseconds that fit 32 bits. Unlike the C client, `begin()` takes the whole image as bytes.
 
 ```python

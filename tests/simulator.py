@@ -5,6 +5,9 @@ bytes on purpose, apart from the C code's."""
 from __future__ import annotations
 
 import random
+import socket
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -188,3 +191,86 @@ def answer_to_activate(to_device: bool, frame: bytes) -> bool:
 def first_data(to_device: bool, frame: bytes) -> bool:
     """For Link.lose: the first DATA frame"""
     return to_device and frame[0] == OP_DATA
+
+
+class Loopback(dfukit.Transport):
+    """A transport to a device in this process, on the real clock, as a plugin would bring one. It
+    can drop frames to the device, go dead, or fail once it has sent some."""
+
+    def __init__(
+        self, device: Device, drop: float = 0.0, dead: bool = False, fail_after: int | None = None
+    ) -> None:
+        super().__init__()
+        self.device, self.dead, self.fail_after = device, dead, fail_after
+        self.drop = drop
+        self.random = random.Random(1)
+        self.lock = threading.Lock()
+        self.running = True
+        device.on_host = lambda _to, frame: self.received(frame)
+        self.poller = threading.Thread(target=self._poll, daemon=True)
+        self.poller.start()
+
+    def send(self, frame: bytes) -> None:
+        if self.fail_after is not None:
+            if self.fail_after == 0:
+                raise dfukit.LinkError("gone")
+            self.fail_after -= 1
+        if self.dead or self.random.random() < self.drop:
+            return
+        with self.lock:
+            self.device.feed(HOST, frame, real_ms())
+
+    def close(self) -> None:
+        self.running = False
+        self.poller.join(timeout=1)
+
+    def _poll(self) -> None:
+        while self.running:
+            with self.lock:
+                self.device.poll(real_ms())
+            time.sleep(0.001)
+
+
+class UdpDevice:
+    """A device on a UDP port of this machine."""
+
+    def __init__(self, device: Device, port: int = 0) -> None:
+        self.device = device
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(("127.0.0.1", port))
+        self.socket.settimeout(0.002)
+        self.port = self.socket.getsockname()[1]
+        self.host_address: tuple[str, int] | None = None
+        self.running = True
+        # Set to go silent: after this many frames, for deaf_for seconds
+        self.deaf_after: int | None = None
+        self.deaf_for = 0.0
+        self.deaf_until = 0.0
+        device.on_host = lambda _to, frame: self.socket.sendto(frame, self.host_address)
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def close(self) -> None:
+        self.running = False
+        self.thread.join(timeout=1)
+        self.socket.close()
+
+    def _run(self) -> None:
+        while self.running:
+            try:
+                frame, address = self.socket.recvfrom(2048)
+                if self.deaf_after is not None:
+                    self.deaf_after -= 1
+                    if self.deaf_after <= 0:
+                        self.deaf_after = None
+                        self.deaf_until = time.monotonic() + self.deaf_for
+                if time.monotonic() >= self.deaf_until:
+                    self.host_address = address
+                    self.device.feed(HOST, frame, real_ms())
+            except (TimeoutError, ConnectionResetError):
+                pass
+            self.device.poll(real_ms())
+
+
+def real_ms() -> int:
+    return int(time.monotonic() * 1000) & 0xFFFFFFFF

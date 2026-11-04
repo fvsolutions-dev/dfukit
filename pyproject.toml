@@ -6,10 +6,16 @@ build-backend = "scikit_build_core.build"
 name = "dfukit"
 # From the git tag: v2.0.1 is version 2.0.1, and builds between tags get a dev version
 dynamic = ["version"]
-description = "Firmware updates over any link: the dfukit server and client, from Python"
+description = "Firmware updates over any link: a CLI and a Python package over the dfukit client"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
+
+[project.scripts]
+dfukit = "dfukit.cli:main"
+
+[project.optional-dependencies]
+serial = ["pyserial>=3.5", "burst-link-protocol>=1.1.6"]
 
 [project.urls]
 Repository = "https://github.com/fvsolutions-dev/dfukit"
@@ -21,6 +27,8 @@ dev = [
     "nanobind>=2.5",
     "pytest-cov>=7.1.0",
     "gcovr",
+    "pyserial>=3.5",
+    "burst-link-protocol>=1.1.6",
 ]
 
 [tool.scikit-build]
@@ -57,5 +65,5 @@ mypy_path = "python"
 
 [[tool.mypy.overrides]]
 # No type information
-module = ["_dfukit"]
+module = ["serial.*", "burst_interface_c.*", "_dfukit"]
 ignore_missing_imports = true

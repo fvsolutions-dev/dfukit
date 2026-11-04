@@ -1,5 +1,6 @@
-"""dfukit 2: firmware updates over any link. The C server and client, driven from Python: frames in
-with feed(), frames out through send, time in with poll()."""
+"""dfukit 2: firmware updates over any link. Update sends an image through a transport. Below it,
+the C server and client driven from Python: frames in with feed(), frames out through send, time
+in with poll()."""
 
 from _dfukit import (
     Client,
@@ -15,16 +16,50 @@ from _dfukit import (
     status_name,
 )
 
+from dfukit.transport import LinkError, Transport, available_transports, open_transport
+from dfukit.update import (
+    ACTIVATE_AT_NEXT_BOOT,
+    DEFLATE,
+    KIND_IMAGE,
+    KIND_PASSTHROUGH,
+    RAW,
+    ActivationNotConfirmed,
+    Board,
+    Info,
+    Update,
+    UpdateError,
+    deflate,
+    info,
+    parse_info,
+)
+
 __all__ = [
+    "ACTIVATE_AT_NEXT_BOOT",
+    "DEFLATE",
+    "KIND_IMAGE",
+    "KIND_PASSTHROUGH",
+    "RAW",
+    "ActivationNotConfirmed",
+    "Board",
     "Client",
     "ClientState",
     "Inflate",
+    "Info",
+    "LinkError",
     "PassthroughBackend",
     "RamBackend",
     "Server",
     "SessionState",
     "Status",
+    "Transport",
+    "Update",
+    "UpdateError",
+    "available_transports",
     "crc32",
+    "deflate",
     "frame_activated",
+    "info",
+    "open_transport",
+    "parse_info",
     "status_name",
 ]
