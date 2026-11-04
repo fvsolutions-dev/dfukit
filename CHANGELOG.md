@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add support for compressed (Deflated) images, decoded on the device as they come in, with miniz's inflater built in
+
+## [2.0.1] - 2026-11-04
+
 ### Changed
 
 - Wheels are built and tested up to Python 3.15, with cibuildwheel 4. Linux wheels now need glibc
@@ -26,5 +32,6 @@ A new protocol and library. Not compatible with dfukit 1.
 - A Python interface to the server and the client (`dfukit.Server`, `dfukit.Client`)
 - Wheels for Linux, macOS and Windows
 
-[Unreleased]: https://github.com/fvsolutions-dev/dfukit/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/fvsolutions-dev/dfukit/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/fvsolutions-dev/dfukit/releases/tag/v2.0.1
 [2.0.0]: https://github.com/fvsolutions-dev/dfukit/releases/tag/v2.0.0

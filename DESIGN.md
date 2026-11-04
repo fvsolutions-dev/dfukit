@@ -24,7 +24,9 @@ guide to using it.
   device) lives in a backend, registered for the board IDs it takes.
 - A full pipeline. The host streams; the device answers asynchronously. A lost frame costs a
   resend of part of a window, never a stall.
-- No dependencies in the core: plain binary messages (a TLV tail where fields are optional).
+- Compression built in: deflate (RFC 1951).
+- No dependencies in the core: plain binary messages (a TLV tail where fields are optional);
+  the inflater is the only library, and only on devices that take deflate.
 
 ## Level 0: roles
 
@@ -56,7 +58,7 @@ flowchart LR
 - Host: has the image and sends it (a PC tool, a phone, or an embedded host).
 - Device: takes images for the board IDs its backends are registered for.
 - Bridge: a device whose backend is a *pass-through*: it carries a session on to a downstream
-  device, which checks and writes itself. Chains of bridges work the same way.
+  device, which decodes, checks and writes itself. Chains of bridges work the same way.
 
 ## Level 1: the parts
 
@@ -95,7 +97,8 @@ Backends know nothing about the protocol. On a device, a frame takes this path:
 flowchart LR
     tr["Transport<br/>(the application's)"] --> wire[Wire format]
     wire --> server["Server<br/>sessions and flow control"]
-    server --> image[Image backend]
+    server --> codec["Codec<br/>raw or inflate"]
+    codec --> image[Image backend]
     server --> pass[Pass-through backend]
     server -. "ACK and answers" .-> tr
     clock["Clock<br/>(the application's)"] --> server
@@ -108,10 +111,10 @@ links the server; a bridge that also sends on its own links both.
 - Peer: every frame comes in with an opaque peer address from the transport (a socket, a BLE
   connection, a bus address). Answers go to the frame's own peer; a session belongs to the peer
   that sent its `START`.
-- Two kinds of backend. An *image* backend gets the image, in order, and puts it in
+- Two kinds of backend. An *image* backend gets the decoded image, in order, and puts it in
   place. A *pass-through* backend gets the session's frames unchanged and hands back the frames of
-  the device behind it; the core keeps the owning peer and routes the answers to it. Flow control
-  and checks then happen at the far end. dfukit provides the interface; pass-through
+  the device behind it; the core keeps the owning peer and routes the answers to it. Flow control,
+  decoding and checks then happen at the far end. dfukit provides the interface; pass-through
   backends are written by the application, since only it knows the downstream link.
 
 ## Protocol
@@ -133,13 +136,13 @@ All integers little-endian. Every frame starts with an opcode byte; host-to-devi
 | `07` | `STATUS` | (empty) | state `u8`, session `u16`, offset `u32`, board ID `u32` |
 
 A board record in `INFO`: board ID `u32`, backend kind `u8` (image, pass-through), largest image
-`u32`, encodings `u8` (a bit per encoding: bit 0 raw), window `u8` (log2 of the largest window an encoding
-may use, 0 for raw), then a TLV tail: length `u16`, and entries of type
+`u32`, encodings `u8` (a bit per encoding: bit 0 raw, bit 1 deflate), deflate window `u8` (log2 of the
+largest window the device inflates, 0 without deflate), then a TLV tail: length `u16`, and entries of type
 `u8` + length `u8` + value. Types so far: `1` name (UTF-8), `2` running version (UTF-8). A host
 skips types it does not know, so a device can add fields
 without breaking older hosts. No serialization library on either end.
 
-`START` flags: bit 0 *resume*. Encodings: `0` raw; a device refuses others with `BAD_FRAME`.
+`START` flags: bit 0 *resume*. Encodings: `0` raw, `1` deflate; a device refuses others with `BAD_FRAME`.
 
 ### Status codes
 
@@ -151,7 +154,7 @@ without breaking older hosts. No serialization library on either end.
 | `03` | `UNKNOWN_BOARD`: no backend registered for `START`'s board ID | give up, nothing touched |
 | `04` | `TOO_LARGE` | give up |
 | `05` | `NO_RESUME`: no state to resume from (the device restarted) | `START` again from 0 |
-| `06` | `BAD_STREAM`: the stream is not the size `START` said | give up |
+| `06` | `BAD_STREAM`: the stream does not decode, or is not the size `START` said | give up |
 | `07` | `CRC_MISMATCH` at `FINISH` | give up |
 | `08` | `BACKEND`: the backend refused (flash, signature, its own check); the reason has its text | give up |
 | `09` | `NO_SESSION`: a session number nobody knows (the device restarted) | give up, or `START` again |
@@ -176,7 +179,7 @@ sequenceDiagram
 
     H->>D: INFO
     D-->>H: INFO (board IDs taken)
-    H->>D: START (board ID, size, CRC-32)
+    H->>D: START (board ID, deflate, size, CRC-32)
     Note over D: board ID selects the backend
     D->>B: begin
     D-->>H: START OK (session, window = 0)
@@ -184,7 +187,7 @@ sequenceDiagram
     D-->>H: ACK (offset 0, window W)
     loop pipeline: never more than the window beyond the last ACK
         H->>D: DATA (offset, bytes)
-        D->>B: write (in order)
+        D->>B: write (decoded, in order)
         D-->>H: ACK (offset, window) every 8 KB or 50 ms
     end
     H->>D: FINISH
@@ -214,6 +217,9 @@ flowchart LR
   `ACK` of its own.
 - The host has at most *offset + window* sent. The server does not enforce this: whether more fits
   is up to the backend.
+- The window counts the stream's bytes. Deflated, a few bytes can decode to many (padding
+  compresses a thousandfold): a backend that buffers the decoded image keeps headroom, or
+  blocks in `write` until it has room.
 
 ### Lost frames: go-back-N
 
@@ -245,7 +251,7 @@ sequenceDiagram
   flight. That also covers a lost `GAP`. Requests (`START`, `FINISH`, `ACTIVATE`) are sent
   `tries` times (8) before the client gives up; every answer from the device resets them, and
   `stall_ms` (5 minutes) bounds a device that answers but makes no progress.
-- The device never buffers out of order: it writes strictly in sequence. A loss costs
+- The device never buffers out of order: it decodes and writes strictly in sequence. A loss costs
   at most one window resent.
 
 ### Resume
@@ -273,6 +279,9 @@ sequenceDiagram
         H->>D: START (from 0)
     end
 ```
+
+Deflate needs its window and state to go on mid-stream: resume only while the device still has
+them, never across a restart.
 
 ### The device's session
 
@@ -375,7 +384,7 @@ flowchart LR
 classDiagram
     class backend {
         +board_id, kind, name, version
-        +max_size, encodings
+        +max_size, encodings, window_log2
         +begin(start) status
         +write(offset, bytes) status
         +finish() status or PENDING
@@ -450,6 +459,17 @@ sequenceDiagram
 - The application decides what the backend does: how to reach the downstream device, how to put
   it into update mode, how long to wait for its `INFO`.
 
+## Compression
+
+Deflate (RFC 1951, raw) is the encoding; raw is always allowed.
+
+- Inflate on the device: miniz's tinfl, built into the library (`lib/miniz`, about 8.4 KB
+  of state plus the window). The server takes any decoder through `dfukit_inflater_t`.
+- The window (up to 32 KB) is per board ID in `INFO`; the host compresses to fit.
+- Deflate on the host: the host brings its own encoder (Python's `zlib`, say), or sends raw.
+- A deflate stream may be a little larger than its image (stored blocks), within a bound the
+  server checks at `START`. An image that decodes larger than `START` said fails with `BAD_STREAM`.
+
 ## The client, in C and from Python
 
 - The client is driven like the server: frames in (`feed`), frames out (a send callback),
@@ -463,13 +483,15 @@ sequenceDiagram
 ```mermaid
 flowchart TB
     subgraph repo [dfukit 2]
-        core["src/<br/>the wire format, server, client (C99)"]
+        core["src/<br/>the wire format, server, client, inflate (C99)"]
         crc["lib/crc32/<br/>CRC-32, weak: replaceable"]
+        miniz["lib/miniz/<br/>tinfl"]
         backends["backends/<br/>ram"]
         py["python/<br/>bindings"]
         tests["tests/<br/>client and server over a lossy link, the wire format, bindings"]
     end
     core --> crc
+    core --> miniz
     backends --> core
     py --> core
     tests --> py
@@ -480,8 +502,8 @@ flowchart TB
 The tests are in Python, on the shipped C code through its bindings (`tests/README.md`):
 
 - A server and a client through a simulated link: a normal update, the refusals, the window,
-  frames dropped, duplicated and delayed, resume, slow backends, two boards, a pass-through. The
-  image must arrive whole, with a bounded number of resends.
+  frames dropped, duplicated and delayed, resume, slow backends, two boards, a pass-through,
+  deflate. The image must arrive whole, with a bounded number of resends.
 - The frames, byte for byte, against bytes written out by hand.
 
 ```bash
@@ -515,7 +537,7 @@ flowchart LR
   pass-through.
 - On `START` for the device, the pass-through brings the device into update mode (for example a
   pin held while it resets it), then carries the session over the serial link.
-- The device checks and writes the image itself.
+- The device decodes, checks and writes the image itself.
 
 ## Open points
 

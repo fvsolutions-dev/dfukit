@@ -8,6 +8,7 @@ and a client for the host, both in C.
 - A pipeline, not a request per frame: the host sends what the device's window allows, the
   device acknowledges in bulk, and a lost frame is sent again from where it went missing
   (go-back-N).
+- Images raw or deflated, decoded on the device as they come in (miniz's inflater, built in).
 - A 32-bit board ID per image target: it selects the backend that writes the image, and a
   device refuses IDs it does not know before it touches anything.
 - Backends for what is behind a board ID: your own for an OTA slot or a bootloader's slot, one
@@ -114,6 +115,20 @@ your own). Two peers are the same when their bytes are. The peer that starts a s
 another one gets `BUSY` until it ends, unless it resumes the same image (see "Security").
 `INFO` and `STATUS` are answered to anyone.
 
+To take deflated images, give the server an inflater and a dictionary as large as the window the
+backend announces (32 KiB takes any deflate stream):
+
+```c
+#include "dfukit_inflate.h"
+
+static dfukit_inflate_t inflate;
+static dfukit_inflater_t inflater;
+static uint8_t dict[1u << 15];
+
+dfukit_inflate_init(&inflate, &inflater, dict, sizeof(dict));
+// and in the server's config: .inflater = &inflater
+```
+
 `on_status` in the config reports the session's state and progress, on every change and every
 acknowledgement: for a light or a display. A pass-through session has no progress to report.
 
@@ -129,7 +144,7 @@ calls it in order:
 | Callback | Required | When | What it does |
 |---|---|---|---|
 | `begin` | yes | `START` | gets ready for an image of `start->image_size` bytes (may erase) |
-| `write` | yes | data comes in | writes the image at `offset`, in order |
+| `write` | yes | data comes in | writes the decoded image at `offset`, in order |
 | `window` | yes | every acknowledgement | how many more stream bytes it can take now (0: wait) |
 | `finish` | yes | `FINISH` | its own checks of the whole image; `DFUKIT_PENDING` while still writing |
 | `activate` | yes | `ACTIVATE` | makes the image the one that runs (restarts, or at the next boot) |
@@ -146,7 +161,7 @@ void my_backend_init(dfukit_backend_t *backend, uint32_t board_id)
 	backend->board_id = board_id;
 	backend->kind = DFUKIT_KIND_IMAGE;
 	backend->max_size = MY_SLOT_SIZE;
-	backend->encodings = DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_RAW);
+	backend->encodings = DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_RAW); // and _DEFLATE, if it fits
 	backend->begin = my_begin;
 	backend->write = my_write;
 	backend->window = my_window;
@@ -197,6 +212,8 @@ void on_frame_from_the_device_behind(const uint8_t *frame, size_t len)
 
 - The window is a promise the backend makes to the host, not a limit the server enforces: a host
   that sends past it still gets its frames to `write`. A backend that buffers takes more, or fails.
+- One inflater serves every backend: its dictionary must take the largest `window_log2` a
+  backend announces, else a stream compressed to that window fails at its CRC.
 - `begin` runs inside the `START` it answers: it must be done within the client's tries times
   its RTO (4 s by default), or open with a window of 0 and do the rest in the background.
 - `activate` only schedules the switch (a restart after `delay_ms`, from a timer or a task):
@@ -285,6 +302,19 @@ if client.state == dfukit.ClientState.FAILED:
 `dfukit.Server` is the device's end, with `add()` for a backend (`RamBackend`, `PassthroughBackend`),
 `feed(peer, frame, now)` and `poll(now)`; its `send` callback gets `(peer, frame)`.
 
+A deflated image goes the same way: the client streams the compressed bytes, and `begin()` still
+takes the image, for its size and CRC. The stream is raw deflate, with a window the device announces:
+
+```python
+compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
+stream = compressor.compress(image) + compressor.flush()
+client = dfukit.Client(link_send, lambda offset, length: stream[offset : offset + length], max_frame=512)
+client.begin(0x0000A001, image, now_ms(), stream_size=len(stream), encoding=1)
+```
+
+On the server, `server.set_inflater(dfukit.Inflate(15))` turns deflate on.
+
 ## License
 
-Apache-2.0 ([LICENSE](LICENSE)).
+Apache-2.0 ([LICENSE](LICENSE)). miniz's inflater in `lib/miniz` is MIT
+([its LICENSE](lib/miniz/LICENSE)).

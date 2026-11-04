@@ -15,6 +15,7 @@
 
 #include "dfukit_client.h"
 #include "dfukit_crc32.h"
+#include "dfukit_inflate.h"
 #include "dfukit_ram.h"
 #include "dfukit_server.h"
 
@@ -104,7 +105,7 @@ struct Client {
 	}
 
 	// An update of image to board_id: its size and CRC follow from it, unless given (a stream
-	// of another size for a test's wrong values)
+	// of another size when it is encoded, or a test's wrong values)
 	void begin(uint32_t board_id, const nb::bytes &image, uint32_t timestamp,
 		   std::optional<uint32_t> stream_size, uint8_t encoding, uint8_t flags,
 		   std::optional<uint32_t> image_size, std::optional<uint32_t> crc32, bool activate,
@@ -206,6 +207,18 @@ struct Passthrough : Backend {
 	}
 };
 
+// The deflate decoder, for a server
+struct Inflate {
+	dfukit_inflate_t inflate;
+	dfukit_inflater_t inflater;
+	std::vector<uint8_t> dict;
+
+	explicit Inflate(unsigned window_log2) : dict(size_t{1} << window_log2)
+	{
+		dfukit_inflate_init(&inflate, &inflater, dict.data(), dict.size());
+	}
+};
+
 // send(peer, frame) returns None, or -1 when it did not go; status(state, done, total, activated)
 struct Server {
 	dfukit_server_t server;
@@ -244,6 +257,11 @@ struct Server {
 							   current->total, current->activated);
 			return 0;
 		});
+	}
+
+	void set_inflater(Inflate &inflate)
+	{
+		server.config.inflater = &inflate.inflater;
 	}
 
 	void add(Backend &backend)
@@ -384,10 +402,13 @@ NB_MODULE(_dfukit, module)
 		.def(nb::init<uint32_t, uint32_t, nb::object, nb::object>(), "board_id"_a,
 		     "max_size"_a, "forward"_a, "end"_a);
 
+	nb::class_<Inflate>(module, "Inflate").def(nb::init<unsigned>(), "window_log2"_a);
+
 	nb::class_<Server>(module, "Server")
 		.def(nb::init<nb::object, nb::object, std::string, uint16_t>(), "send"_a,
 		     "on_status"_a = nb::none(), "name"_a = "", "max_frame"_a = 512)
 		.def("add", &Server::add, nb::keep_alive<1, 2>())
+		.def("set_inflater", &Server::set_inflater, nb::keep_alive<1, 2>())
 		.def("feed", &Server::feed)
 		.def("poll", &Server::poll)
 		.def("downstream", &Server::downstream)

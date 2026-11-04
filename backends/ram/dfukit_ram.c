@@ -90,7 +90,9 @@ void dfukit_ram_init(dfukit_ram_t *ram, dfukit_backend_t *backend, uint32_t boar
 	backend->kind = DFUKIT_KIND_IMAGE;
 	backend->name = "ram";
 	backend->max_size = (uint32_t)size;
-	backend->encodings = DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_RAW);
+	backend->encodings = DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_RAW) |
+			     DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_DEFLATE);
+	backend->window_log2 = 15;
 	backend->begin = ram_begin;
 	backend->write = ram_write;
 	backend->finish = ram_finish;

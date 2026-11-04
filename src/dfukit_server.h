@@ -16,10 +16,25 @@
 extern "C" {
 #endif
 
+// The decoded image's bytes, in order, to wherever they go: what an inflater hands on
+typedef dfukit_status_t (*dfukit_sink_fn)(void *ctx, const uint8_t *data, size_t len);
+
+// A decoder for one encoding (deflate): fed the stream as it comes, in pieces of any size
+typedef struct {
+	// A new stream begins
+	void (*reset)(void *ctx);
+	// As much of input as decodes, to sink. DFUKIT_OK, DFUKIT_BAD_STREAM, or what sink returned
+	dfukit_status_t (*feed)(void *ctx, const uint8_t *input, size_t len, dfukit_sink_fn sink,
+				void *sink_ctx);
+	// The stream has ended (its last block decoded)
+	bool (*done)(void *ctx);
+	void *ctx;
+} dfukit_inflater_t;
+
 typedef struct dfukit_backend dfukit_backend_t;
 
 // What puts an image in place, for the board IDs it registers for (one backend, one ID: register
-// a copy per ID). An image backend gets the image in order; a pass-through backend gets
+// a copy per ID). An image backend gets the decoded image in order; a pass-through backend gets
 // the session's frames and hands the downstream device's back with dfukit_server_downstream()
 struct dfukit_backend {
 	uint32_t board_id;
@@ -28,8 +43,10 @@ struct dfukit_backend {
 	// The running image's version, for INFO (optional)
 	const char *version;
 	uint32_t max_size;
-	// What it takes, for INFO: encodings (DFUKIT_ENCODING_BIT)
+	// What it takes, for INFO: encodings (DFUKIT_ENCODING_BIT), the largest deflate window
+	// (log2)
 	uint8_t encodings;
+	uint8_t window_log2;
 
 	// An image backend's. begin may take long (an erase): the session's first window comes
 	// after it. write gets the image at offset, in order
@@ -80,6 +97,8 @@ typedef struct {
 	const char *name;
 	// The largest frame the transport carries
 	uint16_t max_frame;
+	// For DFUKIT_ENCODING_DEFLATE; NULL: raw only
+	const dfukit_inflater_t *inflater;
 	// An ACK after this many stream bytes taken, or this long after the first not acked
 	// (0: 8192 bytes, 50 ms)
 	uint32_t ack_bytes;

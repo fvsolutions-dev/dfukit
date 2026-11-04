@@ -12,6 +12,9 @@
 #define DEFAULT_ACK_MS    50
 #define DEFAULT_IDLE_MS   10000
 #define DEFAULT_RESUME_MS 60000
+// A deflate stream's size over its image's, at most: stored blocks' headers (5 bytes per
+// 64 KiB, 1/64 bounds them generously), plus the stream's end
+#define DEFLATE_OVERHEAD  1024
 // A board's name and version in INFO, at most
 #define TLV_TEXT_MAX      48
 
@@ -312,15 +315,24 @@ static void on_start(dfukit_server_t *server, const dfukit_peer_t *from, const u
 		send_start_answer(server, from, DFUKIT_UNKNOWN_BOARD, 0);
 		return;
 	}
-	// An image backend's checks, before an old session goes for it: the encoding, the sizes
+	// An image backend's checks, before an old session goes for it: the encoding, the sizes. A
+	// deflate stream is at most a little larger than its image (stored blocks)
 	if (backend->kind == DFUKIT_KIND_IMAGE) {
 		dfukit_status_t refused = DFUKIT_OK;
+		bool takes_deflate =
+			server->config.inflater != NULL &&
+			(backend->encodings & DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_DEFLATE));
 
-		if (start.encoding != DFUKIT_ENCODING_RAW) {
+		if (start.encoding != DFUKIT_ENCODING_RAW &&
+		    !(start.encoding == DFUKIT_ENCODING_DEFLATE && takes_deflate)) {
 			refused = DFUKIT_BAD_FRAME;
-		} else if (start.image_size > backend->max_size) {
+		} else if (start.image_size > backend->max_size ||
+			   (start.stream_size > start.image_size &&
+			    start.stream_size - start.image_size >
+				    start.image_size / 64 + DEFLATE_OVERHEAD)) {
 			refused = DFUKIT_TOO_LARGE;
-		} else if (start.stream_size != start.image_size) {
+		} else if (start.encoding == DFUKIT_ENCODING_RAW &&
+			   start.stream_size != start.image_size) {
 			refused = DFUKIT_BAD_FRAME;
 		}
 		if (refused != DFUKIT_OK) {
@@ -365,6 +377,9 @@ static void on_start(dfukit_server_t *server, const dfukit_peer_t *from, const u
 	server->acked = 0;
 	server->ended_activated = false;
 	server->crc = 0;
+	if (start.encoding == DFUKIT_ENCODING_DEFLATE) {
+		server->config.inflater->reset(server->config.inflater->ctx);
+	}
 	server->state = DFUKIT_SESSION_TRANSFER;
 	server->last_frame = timestamp;
 	server->gap_sent = false;
@@ -463,9 +478,14 @@ static void on_data(dfukit_server_t *server, const dfukit_peer_t *from, const ui
 	}
 }
 
-/** @brief The stream's bytes to the backend and the CRC */
+/** @brief The stream's bytes, decoded if they need it, to the backend and the CRC. */
 static dfukit_status_t take(dfukit_server_t *server, const uint8_t *data, size_t len)
 {
+	if (server->start.encoding == DFUKIT_ENCODING_DEFLATE) {
+		const dfukit_inflater_t *inflater = server->config.inflater;
+
+		return inflater->feed(inflater->ctx, data, len, to_backend, server);
+	}
 	return to_backend(server, data, len);
 }
 
@@ -523,7 +543,9 @@ static void on_finish(dfukit_server_t *server, const dfukit_peer_t *from, const 
 		return;
 	}
 	if (server->expected != server->start.stream_size ||
-	    server->written != server->start.image_size) {
+	    server->written != server->start.image_size ||
+	    (server->start.encoding == DFUKIT_ENCODING_DEFLATE &&
+	     !server->config.inflater->done(server->config.inflater->ctx))) {
 		status = DFUKIT_BAD_STREAM;
 	} else {
 		if (server->crc != server->start.crc32) {
@@ -653,10 +675,16 @@ static void answer_info(dfukit_server_t *server, const dfukit_peer_t *to)
 		board->board_id = backend->board_id;
 		board->kind = backend->kind;
 		board->max_size = backend->max_size;
-		// What the device takes (a pass-through announces the downstream device's); no
-		// encoding with a window
-		board->encodings = backend->encodings;
-		board->window_log2 = 0;
+		// What the device decodes: deflate only with an inflater (a pass-through announces
+		// the downstream device's)
+		board->encodings =
+			backend->kind == DFUKIT_KIND_IMAGE && server->config.inflater == NULL
+				? (uint8_t)(backend->encodings &
+					    ~DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_DEFLATE))
+				: backend->encodings;
+		board->window_log2 = board->encodings & DFUKIT_ENCODING_BIT(DFUKIT_ENCODING_DEFLATE)
+					     ? backend->window_log2
+					     : 0;
 		board->tlv_len = (uint16_t)tlv;
 		len += sizeof(*board);
 		if (name > 0) {

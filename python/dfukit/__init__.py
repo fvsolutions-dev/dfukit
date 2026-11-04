@@ -4,6 +4,7 @@ with feed(), frames out through send, time in with poll()."""
 from _dfukit import (
     Client,
     ClientState,
+    Inflate,
     PassthroughBackend,
     RamBackend,
     Server,
@@ -17,6 +18,7 @@ from _dfukit import (
 __all__ = [
     "Client",
     "ClientState",
+    "Inflate",
     "PassthroughBackend",
     "RamBackend",
     "Server",

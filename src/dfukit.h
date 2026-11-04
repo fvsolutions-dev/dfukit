@@ -32,7 +32,7 @@ typedef enum {
 	DFUKIT_TOO_LARGE = 0x04,
 	// No state to resume from
 	DFUKIT_NO_RESUME = 0x05,
-	// The stream is not the size START said
+	// The stream does not decode, or is not the size START said
 	DFUKIT_BAD_STREAM = 0x06,
 	DFUKIT_CRC_MISMATCH = 0x07,
 	// The backend refused; the reason has its text
@@ -54,6 +54,7 @@ typedef enum {
 
 typedef enum {
 	DFUKIT_ENCODING_RAW = 0,
+	DFUKIT_ENCODING_DEFLATE = 1,
 } dfukit_encoding_t;
 
 // What a backend does with an image: writes it, or passes the session on
@@ -74,9 +75,9 @@ typedef struct {
 	uint32_t board_id;
 	dfukit_encoding_t encoding;
 	uint8_t flags;
-	// The image
+	// The image, decoded
 	uint32_t image_size;
-	// The stream that carries it: the image itself for raw
+	// The stream that carries it: the image itself for raw, the deflate stream for deflate
 	uint32_t stream_size;
 	// CRC-32 of the image (dfukit_crc32.h)
 	uint32_t crc32;

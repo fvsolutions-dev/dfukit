@@ -119,7 +119,7 @@ typedef struct DFUKIT_FRAME {
 	uint8_t kind;
 	uint32_t max_size;
 	uint8_t encodings;
-	uint8_t window_log2; // for an encoding that has a window, else 0
+	uint8_t window_log2; // the deflate window, 0 when the device does not take deflate
 	uint16_t tlv_len;
 } dfukit_info_board_t;
 
