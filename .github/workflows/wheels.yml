@@ -1,0 +1,93 @@
+name: Wheels
+
+# A version tag publishes to PyPI and creates the GitHub release. By hand it only builds
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v[0-9]*"
+
+jobs:
+  # Before anything is built: a version without a changelog entry is not released
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Take the version's entry
+        if: github.ref_type == 'tag'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$version]" '
+            /^## \[/ { found = index($0, heading) == 1; next }
+            /^\[[^]]+\]: / { next }
+            found
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error file=CHANGELOG.md::No entry for $version"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag'
+        with:
+          name: release-notes
+          path: notes.md
+
+  sdist:
+    needs: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: pipx run build --sdist
+      - name: Check metadata
+        run: pipx run twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  wheels:
+    needs: changelog
+    name: Wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/cibuildwheel@v2.23
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  publish:
+    if: github.event_name == 'push'
+    needs: [sdist, wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag
+          --title "$GITHUB_REF_NAME" --notes-file notes.md
