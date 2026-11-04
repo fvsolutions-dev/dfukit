@@ -77,8 +77,13 @@ typedef struct {
 void dfukit_client_init(dfukit_client_t *client, const dfukit_client_config_t *config);
 
 /**
- * @brief An update: start->flags may ask for a resume. With activate, ACTIVATE follows a good
- *        FINISH
+ * @brief Starts an update
+ * @param client The client
+ * @param start The image: its board ID, sizes and CRC-32. flags may ask for a resume
+ * @param activate Whether ACTIVATE follows a good FINISH
+ * @param activate_flags 0 to activate now, or DFUKIT_ACTIVATE_AT_NEXT_BOOT
+ * @param activate_delay_ms How long the device waits before it switches
+ * @param timestamp The time now, in milliseconds
  */
 void dfukit_client_begin(dfukit_client_t *client, const dfukit_start_t *start, bool activate,
 			 uint8_t activate_flags, uint16_t activate_delay_ms, uint32_t timestamp);

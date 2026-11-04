@@ -112,7 +112,7 @@ links the server; a bridge that also sends on its own links both.
   place. A *pass-through* backend gets the session's frames unchanged and hands back the frames of
   the device behind it; the core keeps the owning peer and routes the answers to it. Flow control
   and checks then happen at the far end. dfukit provides the interface; pass-through
-  backends are the application's, since only it knows the downstream link.
+  backends are written by the application, since only it knows the downstream link.
 
 ## Protocol
 
@@ -164,7 +164,8 @@ never starts a reply.
 ### A normal update
 
 The host streams `DATA` without waiting; the device answers with `ACK`s on its own cadence: every
-8 KB taken or every 50 ms, whichever comes first.
+8 KB taken or once half the window is used, whichever is less, and at the latest after 50 ms. The
+`INFO` exchange below is optional, and up to the application: the client does not send it.
 
 ```mermaid
 sequenceDiagram
@@ -211,7 +212,8 @@ flowchart LR
   while busy and grows it again after. A window of 0 means wait: the host probes, and every
   `ACK` tells it the device is still there. When the window opens again the device sends an
   `ACK` of its own.
-- The host has at most *offset + window* sent. More would be lost in the device's buffer.
+- The host has at most *offset + window* sent. The server does not enforce this: whether more fits
+  is up to the backend.
 
 ### Lost frames: go-back-N
 
@@ -250,9 +252,9 @@ sequenceDiagram
 
 A link that breaks mid-transfer leaves the session waiting: suspended after `idle_ms` (10 s)
 without a frame, dropped `resume_ms` (60 s) after that. The host connects again, from the same
-address or another one, and sends `START` with the *resume* flag and the same image: the session
-is its again, wherever it was, also with the image all in (it then sends `FINISH`). The image's
-CRC and sizes name the session; there is no other credential.
+address or another one, and sends `START` with the *resume* flag and the same image: the host gets
+the session back at the point it reached, even if the whole image had already arrived (it then
+sends `FINISH`). The image's CRC and sizes name the session; there is no other credential.
 
 ```mermaid
 sequenceDiagram
@@ -289,15 +291,21 @@ All of it:
 |---|---|---|
 | Idle | `START` for an image backend, `begin()` done | Transfer |
 | Idle | `START` for a pass-through backend | Pass-through |
-| Transfer | `DATA` and `ACK`, or `FINISH` answered `PENDING` | Transfer |
-| Transfer | `FINISH`, with the CRC and the backend's checks OK | Ready |
+| Transfer | `DATA` and `ACK` | Transfer |
 | Transfer | no frame for `idle_ms` | Suspended |
-| Transfer | `ABORT`, `BAD_STREAM`, a failed check or a backend error | Idle |
 | Suspended | `START` with resume, or `DATA` from the owner | Transfer |
-| Suspended | `resume_ms` passes, or another image's `START` | Idle |
+| Suspended | `resume_ms` passes (the backend is aborted) | Idle |
+| Suspended | another peer's `START` for another image (the backend is aborted) | a new session |
+| Transfer, Suspended | `FINISH`, with the CRC and the backend's checks OK | Ready |
+| Transfer, Suspended | `FINISH` answered `PENDING` | Transfer |
+| Transfer, Suspended | `BAD_STREAM`, a failed check or a backend error | Idle |
+| Transfer, Suspended, Ready | the owner's `ABORT` | Idle |
+| Transfer, Suspended, Ready | the owner's new `START`, not a retry or a resume of this image (the backend is aborted) | a new session |
+| Ready | `START` with resume for the same image | Ready |
 | Ready | `ACTIVATE` OK (the backend restarts after its delay) | Idle |
 | Ready | `resume_ms` passes without `ACTIVATE` (the backend is aborted) | Idle |
 | Pass-through | the owner's `ABORT`, `idle_ms`, or the backend ends it | Idle |
+| Pass-through | the owner's `START` for another of this device's boards | a new session |
 
 Ownership: the peer that started the session owns it. A `START` with the resume flag for the
 same image takes an image session over from any peer; any other frame for it from another peer
@@ -330,7 +338,7 @@ All of it:
 | Finishing | `FINISH` OK, with activate | Activating |
 | Finishing | `FINISH` OK, without activate | Done |
 | Activating | `ACTIVATE` OK | Done |
-| Any of these four | an error, or no answer after `tries`, or `stall_ms` while sending | Failed |
+| Any of these four | an error, no answer after `tries`, or `stall_ms` without progress | Failed |
 | Any of these four, or Failed after `TIMEOUT` | `resume()` | Starting |
 
 After a lost link the application calls `dfukit_client_resume()` on the new one, in any state
@@ -345,7 +353,7 @@ touched. The images themselves are not changed.
 
 ```mermaid
 flowchart LR
-    src["the image's board ID<br/>(the user's: a bundle or a flag)"] --> cli[host]
+    src["the image's board ID<br/>(chosen by the user: a bundle or a flag)"] --> cli[host]
     cli -- "START board ID" --> core[server]
     subgraph dev [device]
         core --> tbl{"registered<br/>board IDs"}
@@ -356,8 +364,9 @@ flowchart LR
     tbl -- "none: UNKNOWN_BOARD,<br/>nothing touched" --> cli
 ```
 
-- dfukit matches. Which ID an image is for, and that the host names it right, is the user's.
-- Assigning the numbers (a table in the project, a hash of a board's name) is the project's.
+- dfukit only matches. You decide which ID an image is for, and must make sure the host sends the
+  right one.
+- The project assigns the numbers (from a table, or a hash of a board's name).
 - `INFO` lists them, so a host can warn before it uploads.
 
 ## Backends
@@ -366,7 +375,7 @@ flowchart LR
 classDiagram
     class backend {
         +board_id, kind, name, version
-        +max_size, encodings, window_log2
+        +max_size, encodings
         +begin(start) status
         +write(offset, bytes) status
         +finish() status or PENDING
@@ -406,7 +415,7 @@ sequenceDiagram
     participant D as Downstream device
 
     H->>B: START (a downstream board ID)
-    Note over B,D: the application's: bring the device<br/>into update mode, open its link
+    Note over B,D: the application brings the device<br/>into update mode and opens its link
     B->>D: INFO
     D-->>B: INFO (board IDs, window)
     B->>D: START (passed on)
@@ -438,16 +447,16 @@ sequenceDiagram
   by the bridge, like a device's own: nothing reaches the device behind it again.
 - The window is the downstream device's: the bridge announces what it announces, so the
   slowest buffer bounds the whole path. The bridge's own queue towards it must hold one window.
-- What the backend does is the application's: how to reach the downstream device, how to put
+- The application decides what the backend does: how to reach the downstream device, how to put
   it into update mode, how long to wait for its `INFO`.
 
 ## The client, in C and from Python
 
 - The client is driven like the server: frames in (`feed`), frames out (a send callback),
-  time in (`poll`). It reads the stream from a callback (a file, flash) and never needs the whole
-  image in RAM.
+  time in (`poll`). It reads the stream from a callback (a file, flash), so the C client never
+  needs the whole image in RAM. Python's `begin()` does: it takes the image as bytes.
 - The Python package is thin: bindings to the C client and server, and the ram backend and
-  pass-through. The sender's logic is the C client's; the link and the clock are the caller's.
+  pass-through. The C client holds the sender's logic; the caller provides the link and the clock.
 
 ## Code layout
 
@@ -480,9 +489,6 @@ cmake -S . -B build && cmake --build build && ctest --test-dir build --no-tests=
 pip install .   # the Python package, with the C library built in
 ```
 
-In an ESP-IDF project the repository is a component: add it to `EXTRA_COMPONENT_DIRS` (or
-`components/`) and `REQUIRES` it.
-
 ## Examples
 
 ### A bridge with a device behind it
@@ -514,4 +520,4 @@ flowchart LR
 ## Open points
 
 - Pass-through backends: how long to wait for the downstream device after bringing it into
-  update mode is the backend's; the host's resends of `START` cover the time it takes.
+  update mode is up to the backend; the host's resends of `START` cover the time it takes.

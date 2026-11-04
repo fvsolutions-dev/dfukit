@@ -131,7 +131,8 @@ typedef struct {
 void dfukit_server_init(dfukit_server_t *server, const dfukit_server_config_t *config);
 
 /**
- * @brief A backend, for its board ID; it stays the application's, and in use until the server is
+ * @brief Adds a backend for its board ID. The application owns the backend, and it must outlive
+ *        the server
  */
 void dfukit_server_register(dfukit_server_t *server, dfukit_backend_t *backend);
 

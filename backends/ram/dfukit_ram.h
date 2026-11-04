@@ -33,7 +33,7 @@ typedef struct {
 	unsigned aborts;
 } dfukit_ram_t;
 
-/** @brief A backend for board_id over buf; ram and backend stay the application's */
+/** @brief A backend for board_id over buf; the application owns ram and backend, and they must outlive the server */
 void dfukit_ram_init(dfukit_ram_t *ram, dfukit_backend_t *backend, uint32_t board_id, uint8_t *buf,
 		     size_t size);
 
