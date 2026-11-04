@@ -1,0 +1,59 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.5"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "dfukit"
+version = "2.0.0"
+description = "Firmware updates over any link: the dfukit server and client, from Python"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/fvsolutions-dev/dfukit"
+Changelog = "https://github.com/fvsolutions-dev/dfukit/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "nanobind>=2.5",
+    "pytest-cov>=7.1.0",
+    "gcovr",
+]
+
+[tool.scikit-build]
+wheel.packages = ["python/dfukit"]
+wheel.py-api = "cp312"
+cmake.build-type = "Release"
+
+[tool.cibuildwheel]
+build-verbosity = 1
+# CPython only: one failing wheel blocks a release
+skip = "pp*"
+# Each wheel tested as it was built, on its own Python
+test-requires = "pytest"
+test-command = "pytest {project}/tests"
+
+[tool.cibuildwheel.macos.environment]
+MACOSX_DEPLOYMENT_TARGET = "10.14"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+isort.known-first-party = ["dfukit"]
+
+[tool.mypy]
+strict = true
+mypy_path = "python"
+
+[[tool.mypy.overrides]]
+# No type information
+module = ["_dfukit"]
+ignore_missing_imports = true
