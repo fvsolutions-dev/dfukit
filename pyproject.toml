@@ -1,10 +1,11 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "nanobind>=2.5"]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.5", "setuptools-scm>=8"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "dfukit"
-version = "2.0.0"
+# From the git tag: v2.0.1 is version 2.0.1, and builds between tags get a dev version
+dynamic = ["version"]
 description = "Firmware updates over any link: the dfukit server and client, from Python"
 readme = "README.md"
 license = "Apache-2.0"
@@ -23,6 +24,7 @@ dev = [
 ]
 
 [tool.scikit-build]
+metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
 wheel.packages = ["python/dfukit"]
 wheel.py-api = "cp312"
 cmake.build-type = "Release"
