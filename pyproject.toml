@@ -29,8 +29,8 @@ cmake.build-type = "Release"
 
 [tool.cibuildwheel]
 build-verbosity = 1
-# CPython only: one failing wheel blocks a release
-skip = "pp*"
+# Not free-threaded: the module is not written for it, and would turn the GIL back on
+skip = "cp3??t-*"
 # Each wheel tested as it was built, on its own Python
 test-requires = "pytest"
 test-command = "pytest {project}/tests"

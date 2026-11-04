@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Wheels are built and tested up to Python 3.15, with cibuildwheel 4. Linux wheels now need glibc
+  2.28 or later, and there are no more 32-bit Linux wheels
+
 ## [2.0.0] - 2026-11-04
 
 A new protocol and library. Not compatible with dfukit 1.
@@ -19,4 +26,5 @@ A new protocol and library. Not compatible with dfukit 1.
 - A Python interface to the server and the client (`dfukit.Server`, `dfukit.Client`)
 - Wheels for Linux, macOS and Windows
 
+[Unreleased]: https://github.com/fvsolutions-dev/dfukit/compare/v2.0.0...HEAD
 [2.0.0]: https://github.com/fvsolutions-dev/dfukit/releases/tag/v2.0.0
