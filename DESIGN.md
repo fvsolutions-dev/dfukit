@@ -570,7 +570,7 @@ flowchart TB
 - The transport interface (Python): `open(address)`, `send(frame)`, frames delivered to a
   callback, `max_frame`, `close()`; a link error when the link is gone. Other links come as
   plugins: a package registers its transports under the entry point `dfukit.transports`.
-- `js/dfukit.js` is the exception: the protocol's client again, in JavaScript, because a web page
+- `src/js/dfukit.js` is the exception: the protocol's client again, in JavaScript, because a web page
   has no C. It keeps to the C client's logic, and its tests run it against the C server.
 - Reconnecting goes through the same transport; the client resumes. Not once `ACTIVATE` is sent: a
   device that restarted has no session left, and would be flashed again.
@@ -581,12 +581,12 @@ flowchart TB
 flowchart TB
     subgraph repo [dfukit 2]
         core["src/<br/>the wire format, server, client, inflate (C99)"]
+        backends["src/backends/<br/>ram, esp-idf-ota, mcuboot-recovery"]
+        py["src/python/<br/>bindings, deflate, transports, CLI"]
+        js["src/js/<br/>the client for web pages"]
         crc["lib/crc32/<br/>CRC-32, weak: replaceable"]
         miniz["lib/miniz/<br/>tinfl"]
-        backends["backends/<br/>ram, esp-idf-ota, mcuboot-recovery"]
         zephyr["zephyr/<br/>the Zephyr module"]
-        py["python/<br/>bindings, deflate, transports, CLI"]
-        js["js/<br/>the client for web pages"]
         tests["tests/<br/>client and server over a lossy link, the wire format, bindings"]
     end
     core --> crc

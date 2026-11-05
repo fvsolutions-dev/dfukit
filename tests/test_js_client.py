@@ -1,4 +1,4 @@
-"""js/dfukit.js in Node, against the C server."""
+"""src/js/dfukit.js in Node, against the C server."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-// js/dfukit.js in Node, for test_js_client.py: its frames on stdin and stdout, each a u16 length and
+// src/js/dfukit.js in Node, for test_js_client.py: its frames on stdin and stdout, each a u16 length and
 // the bytes. Its options are a JSON argument, the image is a file, and the last line on stderr says
 // how it ended
 
@@ -7,7 +7,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-require(path.join(__dirname, "..", "js", "dfukit.js"));
+require(path.join(__dirname, "..", "src", "js", "dfukit.js"));
 const {dfukit} = globalThis;
 
 const options = JSON.parse(process.argv[2]);

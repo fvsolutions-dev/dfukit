@@ -155,7 +155,7 @@ calls it in order:
 | `abort` | no | the session is broken off | undoes what it can |
 
 The server does not check for missing callbacks: a required one left `NULL` crashes when it is
-called. `backends/ram/dfukit_ram.c` is a complete backend to start from. Setting one up looks like
+called. `src/backends/ram/dfukit_ram.c` is a complete backend to start from. Setting one up looks like
 this:
 
 ```c
@@ -442,7 +442,7 @@ On the server, `server.set_inflater(dfukit.Inflate(15))` turns deflate on.
 
 ## A host: JavaScript
 
-`js/dfukit.js` is the client for a web page, on a link the page has (a WebSocket, say). It is a
+`src/js/dfukit.js` is the client for a web page, on a link the page has (a WebSocket, say). It is a
 plain script without dependencies, and defines `dfukit`:
 
 ```js

@@ -23,10 +23,10 @@ if(CONFIG_DFUKIT)
     PROPERTIES COMPILE_OPTIONS -w)
   if(CONFIG_DFUKIT_MCUBOOT_RECOVERY)
     zephyr_library_sources(
-      ${DFUKIT_DIR}/backends/mcuboot-recovery/dfukit_mcuboot.c
-      ${DFUKIT_DIR}/backends/mcuboot-recovery/recovery.c
+      ${DFUKIT_DIR}/src/backends/mcuboot-recovery/dfukit_mcuboot.c
+      ${DFUKIT_DIR}/src/backends/mcuboot-recovery/recovery.c
     )
-    zephyr_include_directories(${DFUKIT_DIR}/backends/mcuboot-recovery)
+    zephyr_include_directories(${DFUKIT_DIR}/src/backends/mcuboot-recovery)
     # Its frames on the UART: burst-link, a module of the same image
     zephyr_library_link_libraries(burst-link-protocol)
     # MCUboot's own headers (bootutil/mcuboot_status.h), for the hook

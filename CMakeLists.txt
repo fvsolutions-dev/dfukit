@@ -19,9 +19,9 @@ if(ESP_PLATFORM)
       src/dfukit_inflate.c
       lib/crc32/dfukit_crc32.c
       lib/miniz/miniz_tinfl.c
-      backends/ram/dfukit_ram.c
-      backends/esp-idf-ota/dfukit_esp_ota.c
-    INCLUDE_DIRS src lib/crc32 lib/miniz backends/ram backends/esp-idf-ota
+      src/backends/ram/dfukit_ram.c
+      src/backends/esp-idf-ota/dfukit_esp_ota.c
+    INCLUDE_DIRS src lib/crc32 lib/miniz src/backends/ram src/backends/esp-idf-ota
     REQUIRES app_update esp_timer bootloader_support
   )
   target_compile_definitions(${COMPONENT_LIB} PUBLIC ${DFUKIT_MINIZ_DEFINITIONS})
@@ -53,13 +53,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(lib/miniz/miniz_tinfl.c PROPERTIES COMPILE_OPTIONS -w)
 endif()
 
-add_library(dfukit_ram STATIC backends/ram/dfukit_ram.c)
-target_include_directories(dfukit_ram PUBLIC backends/ram)
+add_library(dfukit_ram STATIC src/backends/ram/dfukit_ram.c)
+target_include_directories(dfukit_ram PUBLIC src/backends/ram)
 target_link_libraries(dfukit_ram PUBLIC dfukit)
 # Plain C99, as documented: what it does not have is an error
 set_target_properties(dfukit dfukit_ram PROPERTIES C_EXTENSIONS OFF)
 
-# The Python module (python/dfukit_native.cpp, nanobind): dfukit whole, with the ram backend. Tests
+# The Python module (src/python/dfukit_native.cpp, nanobind): dfukit whole, with the ram backend. Tests
 # run through it
 option(DFUKIT_PYTHON "Build the Python module" ${PROJECT_IS_TOP_LEVEL})
 option(DFUKIT_COVERAGE "Measure what the tests cover (tests/README.md)" OFF)
@@ -73,8 +73,8 @@ if(DFUKIT_PYTHON OR SKBUILD)
   find_package(nanobind CONFIG QUIET)
   if(nanobind_FOUND)
     nanobind_add_module(_dfukit STABLE_ABI NB_STATIC
-      ${DFUKIT_SOURCES} backends/ram/dfukit_ram.c python/dfukit_native.cpp)
-    target_include_directories(_dfukit PRIVATE src lib/crc32 lib/miniz backends/ram)
+      ${DFUKIT_SOURCES} src/backends/ram/dfukit_ram.c src/python/dfukit_native.cpp)
+    target_include_directories(_dfukit PRIVATE src lib/crc32 lib/miniz src/backends/ram)
     target_compile_definitions(_dfukit PRIVATE ${DFUKIT_MINIZ_DEFINITIONS})
     if(DFUKIT_COVERAGE)
       target_compile_options(_dfukit PRIVATE --coverage -O0)
