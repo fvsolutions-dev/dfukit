@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-05
+
 ### Added
 
 - `dfukit.Update`, which sends an image through a transport, and `dfukit.info`
@@ -14,7 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - UDP and serial transports, and other links as plugins through the `dfukit.transports` entry point
 - `esp-idf-ota`, a backend for the next OTA slot on ESP-IDF
 - `mcuboot-recovery`, an update inside MCUboot on a UART, and a Zephyr module
-- A client in JavaScript for web pages (`js/dfukit.js`)
+- A client in JavaScript for web pages (`src/js/dfukit.js`)
 
 ## [2.1.0] - 2026-11-04
 
@@ -41,6 +43,7 @@ A new protocol and library. Not compatible with dfukit 1.
 - A Python interface to the server and the client (`dfukit.Server`, `dfukit.Client`)
 - Wheels for Linux, macOS and Windows
 
-[Unreleased]: https://github.com/fvsolutions-dev/dfukit/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/fvsolutions-dev/dfukit/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/fvsolutions-dev/dfukit/releases/tag/v2.2.0
 [2.1.0]: https://github.com/fvsolutions-dev/dfukit/releases/tag/v2.1.0
 [2.0.0]: https://github.com/fvsolutions-dev/dfukit/releases/tag/v2.0.0
