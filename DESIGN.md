@@ -570,6 +570,8 @@ flowchart TB
 - The transport interface (Python): `open(address)`, `send(frame)`, frames delivered to a
   callback, `max_frame`, `close()`; a link error when the link is gone. Other links come as
   plugins: a package registers its transports under the entry point `dfukit.transports`.
+- `js/dfukit.js` is the exception: the protocol's client again, in JavaScript, because a web page
+  has no C. It keeps to the C client's logic, and its tests run it against the C server.
 - Reconnecting goes through the same transport; the client resumes. Not once `ACTIVATE` is sent: a
   device that restarted has no session left, and would be flashed again.
 
@@ -584,6 +586,7 @@ flowchart TB
         backends["backends/<br/>ram, esp-idf-ota, mcuboot-recovery"]
         zephyr["zephyr/<br/>the Zephyr module"]
         py["python/<br/>bindings, deflate, transports, CLI"]
+        js["js/<br/>the client for web pages"]
         tests["tests/<br/>client and server over a lossy link, the wire format, bindings"]
     end
     core --> crc
@@ -602,6 +605,7 @@ The tests are in Python, on the shipped C code through its bindings (`tests/READ
   frames dropped, duplicated and delayed, resume, slow backends, two boards, a pass-through,
   deflate. The image must arrive whole, with a bounded number of resends.
 - The frames, byte for byte, against bytes written out by hand.
+- The JavaScript client, in Node, against a device in the test process.
 - The Python package and the CLI against a device in the test process: in memory, over UDP on this
   machine, and over a pseudo-terminal with the `serial` extra.
 

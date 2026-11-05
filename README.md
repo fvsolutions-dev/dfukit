@@ -1,7 +1,8 @@
 # dfukit
 
 Firmware updates over any link. dfukit is a small update protocol with a server for the device
-and a client for the host, both in C, and a Python package and CLI that drive the C client.
+and a client for the host, both in C, a Python package and CLI that drive the C client, and a client
+in JavaScript for web pages.
 
 - One protocol for every link: UART, UDP, TCP, BLE, USB, or a link of your own. dfukit sends
   frames; the link only has to carry them, and may lose some.
@@ -438,6 +439,32 @@ client.begin(0x0000A001, image, now_ms(), stream_size=len(stream), encoding=1)
 ```
 
 On the server, `server.set_inflater(dfukit.Inflate(15))` turns deflate on.
+
+## A host: JavaScript
+
+`js/dfukit.js` is the client for a web page, on a link the page has (a WebSocket, say). It is a
+plain script without dependencies, and defines `dfukit`:
+
+```js
+const update = new dfukit.Update({
+	send: frame => socket.send(frame), // throws when the link is gone: the resends cover it
+	image,                             // a Uint8Array
+	boardId: 0x0000a001,
+	deflated: await dfukit.deflate(image), // optional
+	maxFrame: 509,
+	onProgress: (done, total) => show(done, total),
+});
+
+socket.onmessage = event => update.received(new Uint8Array(event.data));
+await update.run(); // throws dfukit.UpdateError when it fails; update.resume() on a new link
+```
+
+`dfukit.deflate()` needs `CompressionStream`, which every current browser has. It compresses with a
+32 KiB window and can not use a smaller one, so a board that announces less takes the image raw.
+
+Like Python's `Update`, it does not resume once `ACTIVATE` is sent, because a device that restarted
+would be flashed again: a lost answer is an `UpdateError`, and the device may well be running the new
+image.
 
 ## License
 
