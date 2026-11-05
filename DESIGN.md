@@ -406,12 +406,18 @@ classDiagram
         rollback until confirmed
         signature by ESP-IDF signed apps
     }
+    class mcuboot_recovery {
+        flash_area slot 0
+        first block erased before the first window
+        signature by MCUboot at boot
+    }
     class ram {
         for tests, a buffer
     }
     backend <|-- image_backend
     backend <|-- passthrough_backend
     image_backend <|-- esp_idf_ota
+    image_backend <|-- mcuboot_recovery
     image_backend <|-- ram
 ```
 
@@ -419,10 +425,61 @@ classDiagram
 - esp-idf-ota: the inactive OTA slot, written as it comes (lazy erase), checked and switched
   at `FINISH`/`ACTIVATE`. With ESP-IDF's rollback on, the new image confirms itself once it is
   up, else the bootloader rolls back; without it, a bad image that boots stays. Signatures: ESP-IDF's signed app images, checked before the switch.
+- mcuboot-recovery: for MCUboot devices, an update in the bootloader itself (below).
+  Signatures: MCUboot's, at `FINISH` and at boot.
 - An application writes its own for another platform's slot.
 - Signatures stay with the backends: the CRC-32 only catches accidents. A backend that writes a
   device's only slot has overwritten the old image by the time the new one is checked; the device
   then waits for a good image.
+
+### mcuboot-recovery: an update inside MCUboot
+
+MCUboot itself is unchanged. Its own serial recovery is off (`CONFIG_MCUBOOT_SERIAL=n`); dfukit's
+Zephyr module (`zephyr/`), added to the MCUboot image only (sysbuild:
+`mcuboot_EXTRA_ZEPHYR_MODULES`), turns its action hooks on and implements
+`mcuboot_status_change()` (`CONFIG_DFUKIT_MCUBOOT_RECOVERY`).
+
+```mermaid
+flowchart TB
+    reset([reset]) --> startup["mcuboot_status_change(STARTUP)"]
+    startup --> entry{"recovery requested?<br/>(the mcuboot-button0 pin at reset)"}
+    entry -- yes --> rec[dfukit recovery]
+    entry -- no --> go["boot_go(): MCUboot checks the slot"]
+    rec --> go
+    go --> ok{valid image?}
+    ok -- yes --> boot([boot the application])
+    ok -- no --> nob["mcuboot_status_change(NO_BOOTABLE_IMAGE_FOUND)"]
+    nob --> rec2[dfukit recovery]
+    rec2 --> reboot([reset])
+
+    subgraph rec_detail [dfukit recovery]
+        direction TB
+        r1["the UART chosen as dfukit,uart<br/>(DMA, burst-link frames)"] --> r2[dfukit server]
+        r2 --> r3[inflate] --> r4["flash_area: the slot"]
+        r2 -. feeds .-> r5[MCUBOOT_WATCHDOG_FEED]
+    end
+```
+
+- MCUboot goes on as usual afterwards: it checks the slot (hash, signature) and boots it, or
+  reports no bootable image, and the hook runs recovery again. A power cut during an update ends
+  there: robust.
+- The UART, the board ID, the window and the deflate window are Kconfig settings
+  (`CONFIG_DFUKIT_MCUBOOT_*`); the entry is the `mcuboot-button0` alias at reset, or no
+  bootable image.
+- XIP: a bootloader that runs from the flash it writes runs no code, interrupts included, during
+  an erase or a write. The UART receives by DMA, into two buffers that are handed over in the
+  interrupt, so the window is at most one buffer: all a host may have in flight lands in the
+  buffer that is filling while an erase holds the interrupts. `START`'s first block (64 KiB, a sector where the slot is not block-aligned) is
+  erased with a window of 0; then the image comes, and the rest is erased ahead of it, a block
+  per step between frames, or by the write that gets there first (a deflated frame decodes to
+  much).
+- A data cache (Cortex-M7): the DMA writes past it, so the received range is invalidated
+  before it is read.
+- The device's frames are short (an `ACK` is 12 bytes): sent by polling, done when the send
+  returns.
+- Watchdog: the hook's loop calls `MCUBOOT_WATCHDOG_FEED()`, as MCUboot's own loops do.
+- The hooks are meant for status (LEDs): a plain call from MCUboot's `main()`; blocking there
+  works but is not their intended use. Pin the MCUboot version, and check on every upgrade.
 
 ### Pass-through backends
 
@@ -524,7 +581,8 @@ flowchart TB
         core["src/<br/>the wire format, server, client, inflate (C99)"]
         crc["lib/crc32/<br/>CRC-32, weak: replaceable"]
         miniz["lib/miniz/<br/>tinfl"]
-        backends["backends/<br/>ram, esp-idf-ota"]
+        backends["backends/<br/>ram, esp-idf-ota, mcuboot-recovery"]
+        zephyr["zephyr/<br/>the Zephyr module"]
         py["python/<br/>bindings, deflate, transports, CLI"]
         tests["tests/<br/>client and server over a lossy link, the wire format, bindings"]
     end
@@ -532,6 +590,7 @@ flowchart TB
     core --> miniz
     backends --> core
     py --> core
+    zephyr --> backends
     tests --> py
 ```
 

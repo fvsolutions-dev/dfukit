@@ -1,0 +1,63 @@
+config DFUKIT
+	bool "dfukit: firmware updates over any link"
+	help
+	  dfukit's server and client, CRC-32 and the deflate decoder.
+
+if DFUKIT
+
+config DFUKIT_MCUBOOT_RECOVERY
+	bool "dfukit's recovery in MCUboot"
+	depends on MCUBOOT
+	select MCUBOOT_ACTION_HOOKS
+	select UART_ASYNC_API
+	select FLASH
+	select FLASH_MAP
+	select REBOOT
+	help
+	  MCUboot takes images with dfukit, on the UART chosen as dfukit,uart (its frames
+	  burst-link encoded, received by DMA), into its slot 0: when the
+	  mcuboot-button0 alias is active at reset, or when it finds no bootable image. Instead
+	  of MCUboot's serial recovery (CONFIG_MCUBOOT_SERIAL=n).
+
+if DFUKIT_MCUBOOT_RECOVERY
+
+config DFUKIT_MCUBOOT_BOARD_ID
+	hex "The board ID the device takes images for"
+	default 0x0
+
+config DFUKIT_MCUBOOT_NAME
+	string "The device's name, in INFO"
+	default "mcuboot"
+
+config DFUKIT_MCUBOOT_WINDOW
+	int "Stream bytes the host may have in flight"
+	default 8192
+	help
+	  At most a receive buffer (DFUKIT_MCUBOOT_RX_BUFFER): an erase holds the interrupts, and
+	  the DMA cannot change buffers meanwhile.
+
+config DFUKIT_MCUBOOT_WINDOW_LOG2
+	int "The deflate window taken (log2), 0 for raw only"
+	default 15
+	range 0 15
+	help
+	  The decoder's dictionary takes 2^n bytes of RAM, its state 8.4 KiB more.
+
+config DFUKIT_MCUBOOT_RX_BUFFER
+	int "Each of the two DMA receive buffers, in bytes"
+	default 12288
+	help
+	  At least the window as it is on the line (DFUKIT_MCUBOOT_WINDOW, its framing, and one
+	  frame more), checked at build time.
+
+config DFUKIT_MCUBOOT_ON_BUTTON
+	bool "Recovery when mcuboot-button0 is active at reset"
+	default y
+
+config DFUKIT_MCUBOOT_ON_NO_IMAGE
+	bool "Recovery when MCUboot finds no bootable image"
+	default y
+
+endif # DFUKIT_MCUBOOT_RECOVERY
+
+endif # DFUKIT

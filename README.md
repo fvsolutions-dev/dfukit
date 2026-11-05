@@ -11,8 +11,9 @@ and a client for the host, both in C, and a Python package and CLI that drive th
 - Images raw or deflated, decoded on the device as they come in (miniz's inflater, built in).
 - A 32-bit board ID per image target: it selects the backend that writes the image, and a
   device refuses IDs it does not know before it touches anything.
-- Backends for what is behind a board ID: an ESP-IDF OTA slot and RAM come with dfukit; write your
-  own for another slot, or carry the session to a device further down a chain (pass-through).
+- Backends for what is behind a board ID: an ESP-IDF OTA slot, MCUboot's slot and RAM come with
+  dfukit; write your own for another slot, or carry the session to a device further down a chain
+  (pass-through).
 - Resume after a lost link, with the device's state kept for a while.
 - No threads, no heap and no platform code in the core: the application feeds it frames and
   time, and gets frames back through a callback.
@@ -40,7 +41,9 @@ target_link_libraries(app PRIVATE dfukit dfukit_ram)
 ```
 
 In an ESP-IDF project the repository is a component: add it to `EXTRA_COMPONENT_DIRS` (or
-`components/`) and `REQUIRES` it.
+`components/`) and `REQUIRES` it. In a Zephyr build it is a module (`zephyr/module.yml`): add it
+to `ZEPHYR_EXTRA_MODULES`, or to one image's `<image>_EXTRA_ZEPHYR_MODULES` with sysbuild, and
+turn it on with `CONFIG_DFUKIT`.
 
 ## Building and testing
 
@@ -188,6 +191,7 @@ The ones that come with dfukit:
 |---|---|---|
 | `ram` | any | a buffer; for tests and for devices that handle the image themselves |
 | `esp-idf-ota` | ESP-IDF | the next OTA slot; optionally erased ahead of time (`dfukit_esp_ota_preerase()`) |
+| `mcuboot-recovery` | Zephyr, inside MCUboot | MCUboot's slot 0, from a recovery entered at reset |
 
 A pass-through backend (`kind = DFUKIT_KIND_PASSTHROUGH`) does not write anything: `forward`
 gets the session's frames as they are, for a device further down a chain, and that device's
@@ -234,6 +238,46 @@ After that confirmation, `dfukit_esp_ota_preerase()` erases the other slot in th
 next update writes without waiting for erases. Asked for while the slot holds an update's image, it
 waits for the next update.
 
+### mcuboot-recovery
+
+An update inside MCUboot itself, for devices with a single application slot. MCUboot's own serial
+recovery is off; dfukit's Zephyr module uses MCUboot's action hooks to enter its recovery when
+the `mcuboot-button0` pin is active at reset or when there is no bootable image. It listens on
+the UART chosen as `dfukit,uart`, receives by DMA, and takes its frames encoded with
+[burst-link](https://github.com/fvsolutions-dev/burst-link-protocol). `FINISH` runs MCUboot's own
+check of the image, so the host hears of an image that will not boot; MCUboot checks it again at
+the next boot.
+
+The image needs burst-link as a module next to dfukit's: both in `mcuboot_EXTRA_ZEPHYR_MODULES`
+with sysbuild.
+
+```
+# MCUboot's configuration (sysbuild: sysbuild/mcuboot.conf)
+CONFIG_DFUKIT=y
+CONFIG_DFUKIT_MCUBOOT_RECOVERY=y
+CONFIG_DFUKIT_MCUBOOT_BOARD_ID=0x0000b001
+CONFIG_DMA=y
+```
+
+```dts
+/* MCUboot's devicetree overlay */
+/ {
+	chosen {
+		dfukit,uart = &lpuart1;
+	};
+};
+
+&lpuart1 {
+	current-speed = <3000000>;
+	dmas = <&edma0 2 9>, <&edma0 3 8>;
+	dma-names = "rx", "tx";
+};
+```
+
+The receive buffers (`CONFIG_DFUKIT_MCUBOOT_RX_BUFFER`) must each take the window
+(`CONFIG_DFUKIT_MCUBOOT_WINDOW`): the flash's erases stop the interrupts, and everything a host
+may have in flight then lands in one buffer.
+
 ### Notes for integrators
 
 - The window is a promise the backend makes to the host, not a limit the server enforces: a host
@@ -246,6 +290,8 @@ waits for the next update.
   the server answers `ACTIVATE` with what it returns, so it must return before restarting.
 - `finish` may return `DFUKIT_PENDING` while it still writes what it buffered; the host asks
   again.
+- `mcuboot-recovery` writes the flash in whole write units (`flash_area_align()`); the last
+  one is padded with the erased value.
 
 ## Security
 

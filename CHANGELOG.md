@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `dfukit` command, with `info` and `update`
 - UDP and serial transports, and other links as plugins through the `dfukit.transports` entry point
 - `esp-idf-ota`, a backend for the next OTA slot on ESP-IDF
+- `mcuboot-recovery`, an update inside MCUboot on a UART, and a Zephyr module
 
 ## [2.1.0] - 2026-11-04
 
