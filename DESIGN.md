@@ -401,16 +401,25 @@ classDiagram
         hands back the downstream frames
         the application writes it
     }
+    class esp_idf_ota {
+        the other OTA slot
+        rollback until confirmed
+        signature by ESP-IDF signed apps
+    }
     class ram {
         for tests, a buffer
     }
     backend <|-- image_backend
     backend <|-- passthrough_backend
+    image_backend <|-- esp_idf_ota
     image_backend <|-- ram
 ```
 
 - ram: takes the image into a buffer; for tests, and for a device that handles the image itself.
-- An application writes its own for an OTA slot or a bootloader's slot.
+- esp-idf-ota: the inactive OTA slot, written as it comes (lazy erase), checked and switched
+  at `FINISH`/`ACTIVATE`. With ESP-IDF's rollback on, the new image confirms itself once it is
+  up, else the bootloader rolls back; without it, a bad image that boots stays. Signatures: ESP-IDF's signed app images, checked before the switch.
+- An application writes its own for another platform's slot.
 - Signatures stay with the backends: the CRC-32 only catches accidents. A backend that writes a
   device's only slot has overwritten the old image by the time the new one is checked; the device
   then waits for a good image.
@@ -515,7 +524,7 @@ flowchart TB
         core["src/<br/>the wire format, server, client, inflate (C99)"]
         crc["lib/crc32/<br/>CRC-32, weak: replaceable"]
         miniz["lib/miniz/<br/>tinfl"]
-        backends["backends/<br/>ram"]
+        backends["backends/<br/>ram, esp-idf-ota"]
         py["python/<br/>bindings, deflate, transports, CLI"]
         tests["tests/<br/>client and server over a lossy link, the wire format, bindings"]
     end

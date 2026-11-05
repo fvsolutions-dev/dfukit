@@ -1,0 +1,4 @@
+description: "Firmware updates over any link: the dfukit server, client and backends"
+license: "Apache-2.0"
+dependencies:
+  idf: ">=5.5"

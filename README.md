@@ -11,8 +11,8 @@ and a client for the host, both in C, and a Python package and CLI that drive th
 - Images raw or deflated, decoded on the device as they come in (miniz's inflater, built in).
 - A 32-bit board ID per image target: it selects the backend that writes the image, and a
   device refuses IDs it does not know before it touches anything.
-- Backends for what is behind a board ID: your own for an OTA slot or a bootloader's slot, one
-  for RAM that comes with dfukit, or a device further down a chain (pass-through).
+- Backends for what is behind a board ID: an ESP-IDF OTA slot and RAM come with dfukit; write your
+  own for another slot, or carry the session to a device further down a chain (pass-through).
 - Resume after a lost link, with the device's state kept for a while.
 - No threads, no heap and no platform code in the core: the application feeds it frames and
   time, and gets frames back through a callback.
@@ -187,6 +187,7 @@ The ones that come with dfukit:
 | Backend | Platform | Writes |
 |---|---|---|
 | `ram` | any | a buffer; for tests and for devices that handle the image themselves |
+| `esp-idf-ota` | ESP-IDF | the next OTA slot; optionally erased ahead of time (`dfukit_esp_ota_preerase()`) |
 
 A pass-through backend (`kind = DFUKIT_KIND_PASSTHROUGH`) does not write anything: `forward`
 gets the session's frames as they are, for a device further down a chain, and that device's
@@ -207,6 +208,31 @@ void on_frame_from_the_device_behind(const uint8_t *frame, size_t len)
 	}
 }
 ```
+
+### esp-idf-ota
+
+Writes the next OTA slot, so the partition table needs two OTA slots. `FINISH` runs ESP-IDF's check
+of the image, and `ACTIVATE` makes it the boot image and restarts.
+
+```c
+#include "dfukit_esp_ota.h"
+
+static dfukit_esp_ota_t ota;
+
+// window 0: 16 KiB. window_log2 12: takes deflate, with an inflater of that size in the server's
+// config; 0 takes raw only
+ESP_ERROR_CHECK(dfukit_esp_ota_init(&ota, &backend, 0x0000a001, 0, 12));
+dfukit_server_register(&server, &backend);
+```
+
+Rollback is ESP-IDF's, and off unless `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is on: without it a
+bad image that boots stays. With it, the new image must call
+`esp_ota_mark_app_valid_cancel_rollback()` once it is up, or the next reset goes back to the old
+one. Until it does, updates are refused with `BACKEND`, and the device's log says why.
+
+After that confirmation, `dfukit_esp_ota_preerase()` erases the other slot in the background, so the
+next update writes without waiting for erases. Asked for while the slot holds an update's image, it
+waits for the next update.
 
 ### Notes for integrators
 

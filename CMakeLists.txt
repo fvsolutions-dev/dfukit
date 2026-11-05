@@ -20,7 +20,9 @@ if(ESP_PLATFORM)
       lib/crc32/dfukit_crc32.c
       lib/miniz/miniz_tinfl.c
       backends/ram/dfukit_ram.c
-    INCLUDE_DIRS src lib/crc32 lib/miniz backends/ram
+      backends/esp-idf-ota/dfukit_esp_ota.c
+    INCLUDE_DIRS src lib/crc32 lib/miniz backends/ram backends/esp-idf-ota
+    REQUIRES app_update esp_timer bootloader_support
   )
   target_compile_definitions(${COMPONENT_LIB} PUBLIC ${DFUKIT_MINIZ_DEFINITIONS})
   set_source_files_properties(lib/miniz/miniz_tinfl.c PROPERTIES COMPILE_OPTIONS -w)
